@@ -1,18 +1,17 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
+	"log"
+	"unihack-backend/internal/handlers"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "DeFi Copilot Backend is running!")
-	})
+	app := fiber.New()
 
-	fmt.Println("Server đang chạy tại http://localhost:8080")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		fmt.Println("Lỗi khởi chạy server:", err)
-	}
+	app.Post("/api/chat", handlers.HandleChat)
+
+	log.Println("Server Fiber đang chạy tại http://localhost:8080")
+	log.Fatal(app.Listen(":8080"))
 }

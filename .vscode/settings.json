@@ -4,5 +4,6 @@
             "-frontend",
             "-contracts"
         ]
-    }
+    },
+    "makefile.configureOnOpen": false
 }
