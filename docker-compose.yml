@@ -1,0 +1,59 @@
+version: '3.8'
+services:
+ # Database
+ db:
+   image: postgres:15-alpine
+   container_name: deficopilot_db
+   restart: always
+   environment:
+     POSTGRES_USER: admin
+     POSTGRES_PASSWORD: ${DB_PASTWORD}
+     POSTGRES_DB: deficopilot_db
+   ports:
+     - "5432:5432"
+   volumes:
+     - pgdata:/var/lib/postgresql/data
+
+ # Backend
+ backend:
+   build:
+     context: .
+     dockerfile: backend/Dockerfile
+   container_name: deficopilot_backend
+   restart: always
+   ports:
+     - "8080:8080"
+   environment:
+    # Ket noi database
+     - DB_HOST=db
+     - DB_PORT=5432
+     - DB_USER=admin
+     - DB_PASSWORD=${DB_PASTWORD}
+     - DB_NAME=deficopilot_db
+    # Ket noi AI
+     - AI_API_KEY=${AI_API_KEY}
+    # Ket noi Avalanche
+     - AVALANCHE_RPC_URL=${AVALANCHE_RPC_URL}
+     - SNOWTRACE_API_KEY=${SNOWTRACE_API_KEY}
+     - AGENT_PRIVATE_KEY=${AGENT_PRIVATE_KEY}
+   depends_on:
+     - db
+
+ # Frontend
+ frontend:
+   build:
+     context: ./frontend
+     dockerfile: Dockerfile
+   container_name: deficopilot_frontend
+   restart: always
+   ports:
+     - "3000:3000"
+   environment:
+     - VITE_API_URL=http://localhost:8080
+     - VITE_PRIVY_APP_ID=${VITE_PRIVY_APP_ID}
+   depends_on:
+     - backend
+  
+ # Khai bao volumes
+ volumes: 
+   pgdata:
