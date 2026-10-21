@@ -1,0 +1,9 @@
+{
+    "gopls": {
+        "build.directoryFilters": [
+            "-frontend",
+            "-contracts"
+        ]
+    },
+    "makefile.configureOnOpen": false
+}
