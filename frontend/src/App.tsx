@@ -1,7 +1,10 @@
 import './App.css';
+
 import Header from './components/layout/Header';
 import Sidebar from './components/layout/Sidebar';
 import Footer from './components/layout/Footer';
+
+import Chatbot from './components/Chat/Chatbot';
 
 function App() {
   return (
@@ -14,8 +17,7 @@ function App() {
         <Header />
 
         <main className="content">
-          <h2>Welcome to Avalanche!</h2>
-          <p>Your AI-powered DeFi assistant.</p>
+          <Chatbot />
         </main>
 
         <Footer />
