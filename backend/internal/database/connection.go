@@ -1,4 +1,4 @@
-package database
+package database 
 
 import (
 	"database/sql"
@@ -8,6 +8,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// Ket noi den database PostgreSQL
 func ConnectDB() (*sql.DB, error) {
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
@@ -28,23 +29,4 @@ func ConnectDB() (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
-}
-
-func InitTables(db *sql.DB) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS chat_sessions (
-		session_id SERIAL PRIMARY KEY,
-		wallet_address VARCHAR(255) NOT NULL,
-		role VARCHAR(50) NOT NULL,
-		message TEXT NOT NULL, 
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);`
-
-	_, err := db.Exec(query)
-	if err != nil {
-		return fmt.Errorf("Loi khi tao bang chat_sessions: %v", err)
-	}
-
-	fmt.Println("Da kiem tra/tao bang chat_sessions thanh cong!")
-	return nil
 }
