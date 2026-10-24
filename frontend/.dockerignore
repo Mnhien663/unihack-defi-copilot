@@ -1,0 +1,20 @@
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Environment variables
+.env
+.env.*
+
+# Version control
+.git
+
+# Logs
+*.log
+
+# Editor files
+.vscode
+.idea

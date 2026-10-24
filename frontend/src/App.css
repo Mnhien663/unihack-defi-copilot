@@ -1,0 +1,89 @@
+
+/* css grid for spliting main area and side bar*/
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+.app-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  background-color: #172338;
+  color: white;
+  padding: 24px;
+}
+
+/*flexbox splits main area into small part includes footer, header,..*/
+/* Main Area */
+.main-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-width: 0;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 30px;
+  background-color: #f1f5f9;
+}
+
+/* Main Content */
+.content {
+  flex: 1;
+  padding: 30px;
+}
+
+/* Footer */
+.footer {
+  padding: 15px;
+  text-align: center;
+  background-color: #f1f5f9;
+}
+
+
+/* Responsive for mobile devices */
+@media (max-width: 768px) {
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    padding: 16px;
+  }
+
+  .sidebar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .sidebar nav p {
+    margin: 0;
+  }
+
+  .main-area {
+    min-height: 0;
+  }
+
+  .header {
+    padding: 16px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .content {
+    padding: 20px 16px;
+  }
+}
