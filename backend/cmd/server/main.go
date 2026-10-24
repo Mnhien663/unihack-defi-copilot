@@ -10,8 +10,15 @@ import (
 func main() {
 	app := fiber.New()
 
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"status":  "ok",
+			"service": "unihack-backend",
+		})
+	})
+
 	app.Post("/api/chat", handlers.HandleChat)
 
-	log.Println("Server Fiber đang chạy tại http://localhost:8080")
+	log.Println("Fiber server is running at http://localhost:8080")
 	log.Fatal(app.Listen(":8080"))
 }

@@ -13,16 +13,15 @@ func HandleChat(c *fiber.Ctx) error {
 
 	if err := c.BodyParser(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Dữ liệu không hợp lệ, vui lòng kiểm tra lại",
+			"error": "Invalid request body",
 		})
 	}
 
-	// TODO: (Nhiệm vụ các ngày sau)
-	// Tại đây, bạn sẽ lấy chuỗi text (req.Message) để gửi qua API của các LLM (ví dụ như Google AI Studio).
+	// TODO: Connect req.Message to the selected LLM API.
 
 	return c.JSON(fiber.Map{
 		"status":           "success",
 		"received_message": req.Message,
-		"reply":            "Backend đã nhận được tin nhắn và đang chờ kết nối AI Model!",
+		"reply":            "Backend received the message and is ready to connect to an AI model.",
 	})
 }
