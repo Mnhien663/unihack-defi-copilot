@@ -3,30 +3,55 @@ package avalanche
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-// Thiet lap ket noi voi Avalanch RPC
+const (
+	FujiChainID = int64(43113)
+	rpcTimeout  = 5 * time.Second
+)
+
+// InitClient creates and verifies a connection to Avalanche Fuji C-Chain.
 func InitClient() (*ethclient.Client, error) {
-	rpcURL := os.Getenv("AVALANCHE_RPC_URL")
+	rpcURL := strings.TrimSpace(os.Getenv("AVALANCHE_RPC_URL"))
 	if rpcURL == "" {
-		return nil, fmt.Errorf("chua cau hinh AVALANCHE_RPC_URL trong file.env")
+		return nil, fmt.Errorf("AVALANCHE_RPC_URL is not configured")
 	}
 
-	// Dial mo ket noi den RPC Endpoint
-	client, err := ethclient.Dial(rpcURL)
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	client, err := ethclient.DialContext(ctx, rpcURL)
 	if err != nil {
-		return nil, fmt.Errorf("Loi ket noi den Avalanche RPC: %v", err)
+		return nil, fmt.Errorf("connect to Avalanche RPC: %w", err)
 	}
 
-	// Ping thu den mang de lay ChainID (Fuji la 43113)
-	chainID, err := client.ChainID(context.Background()) 
+	chainID, err := client.ChainID(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Ket noi that bai, khong the lay ChainID: %v", err)
+		client.Close()
+		return nil, fmt.Errorf("get Avalanche chain ID: %w", err)
 	}
 
-	fmt.Printf("Ket noi Avalanche thanh cong! ChainId: %s", chainID.String())
+	expectedChainID := big.NewInt(FujiChainID)
+	if chainID.Cmp(expectedChainID) != 0 {
+		client.Close()
+
+		return nil, fmt.Errorf(
+			"unexpected Avalanche chain ID: got %s, want %s",
+			chainID.String(),
+			expectedChainID.String(),
+		)
+	}
+
+	fmt.Printf(
+		"Connected to Avalanche Fuji. Chain ID: %s\n",
+		chainID.String(),
+	)
+
 	return client, nil
 }

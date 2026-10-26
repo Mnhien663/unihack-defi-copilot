@@ -22,6 +22,7 @@ func TestHandleChat(t *testing.T) {
 			requestBody: `{
 				"session_id": "demo-session-001",
 				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"chain_id": 43113,
 				"message": "Hello",
 				"locale": "en"
 			}`,
@@ -39,6 +40,7 @@ func TestHandleChat(t *testing.T) {
 			requestBody: `{
 				"session_id": "",
 				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"chain_id": 43113,
 				"message": "Hello",
 				"locale": "en"
 			}`,
@@ -46,10 +48,34 @@ func TestHandleChat(t *testing.T) {
 			expectedErrorCode: "MISSING_SESSION_ID",
 		},
 		{
+			name: "missing chain ID",
+			requestBody: `{
+				"session_id": "demo-session-001",
+				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"message": "Hello",
+				"locale": "en"
+			}`,
+			expectedStatus:    fiber.StatusBadRequest,
+			expectedErrorCode: "MISSING_CHAIN_ID",
+		},
+		{
+			name: "unsupported chain ID",
+			requestBody: `{
+				"session_id": "demo-session-001",
+				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"chain_id": 43114,
+				"message": "Hello",
+				"locale": "en"
+			}`,
+			expectedStatus:    fiber.StatusBadRequest,
+			expectedErrorCode: "UNSUPPORTED_CHAIN_ID",
+		},
+		{
 			name: "invalid wallet address",
 			requestBody: `{
 				"session_id": "demo-session-001",
 				"wallet_address": "not-a-wallet",
+				"chain_id": 43113,
 				"message": "Hello",
 				"locale": "en"
 			}`,
@@ -61,6 +87,7 @@ func TestHandleChat(t *testing.T) {
 			requestBody: `{
 				"session_id": "demo-session-001",
 				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"chain_id": 43113,
 				"message": "     ",
 				"locale": "vi"
 			}`,
@@ -72,6 +99,7 @@ func TestHandleChat(t *testing.T) {
 			requestBody: `{
 				"session_id": "demo-session-001",
 				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"chain_id": 43113,
 				"message": "` + strings.Repeat("a", 2001) + `",
 				"locale": "en"
 			}`,
@@ -83,6 +111,7 @@ func TestHandleChat(t *testing.T) {
 			requestBody: `{
 				"session_id": "demo-session-001",
 				"wallet_address": "0x0000000000000000000000000000000000000001",
+				"chain_id": 43113,
 				"message": "Hello",
 				"locale": "fr"
 			}`,
