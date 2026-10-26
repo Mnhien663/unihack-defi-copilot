@@ -1,5 +1,5 @@
 # Build moi truong
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ RUN go mod download
 
 COPY . . 
 
-RUN go build -o main ./cmd/server/main.go
+RUN go build -o main ./cmd/server
 
 # Moi truong chay thuc te
 FROM alpine:latest
