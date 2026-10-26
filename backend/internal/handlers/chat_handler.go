@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"strings"
+	"unihack-backend/internal/avalanche"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gofiber/fiber/v2"
@@ -12,6 +13,7 @@ const maxMessageLength = 2000
 type ChatRequest struct {
 	SessionID     string `json:"session_id"`
 	WalletAddress string `json:"wallet_address"`
+	ChainID       int64  `json:"chain_id"`
 	Message       string `json:"message"`
 	Locale        string `json:"locale"`
 }
@@ -66,6 +68,14 @@ func validateChatRequest(req *ChatRequest) (string, string) {
 
 	if req.SessionID == "" {
 		return "MISSING_SESSION_ID", "session_id is required"
+	}
+
+	if req.ChainID == 0 {
+		return "MISSING_CHAIN_ID", "chain_id is required"
+	}
+
+	if req.ChainID != avalanche.FujiChainID {
+		return "UNSUPPORTED_CHAIN_ID", "chain_id must be 43113 for Avalanche Fuji"
 	}
 
 	if !common.IsHexAddress(req.WalletAddress) {

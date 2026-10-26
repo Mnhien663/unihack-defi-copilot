@@ -1,21 +1,22 @@
 package avalanche
 
-import (
-	"os"
-	"testing"
-)
+import "testing"
 
 func TestInitClient(t *testing.T) {
-	os.Setenv("AVALANCHE_RPC_URL", "https://api.avax-test.network/ext/bc/C/rpc")
+	t.Setenv(
+		"AVALANCHE_RPC_URL",
+		"https://api.avax-test.network/ext/bc/C/rpc",
+	)
 
 	client, err := InitClient()
 	if err != nil {
-		t.Fatalf("Ket noi that bai: %v", err)
+		t.Fatalf("InitClient() returned error: %v", err)
 	}
+	defer client.Close()
 
 	if client == nil {
-		t.Fatal("Loi: Client tra ve nil")
+		t.Fatal("InitClient() returned a nil client")
 	}
 
-	t.Log("Ket noi Avalanche Fuji thanh cong!")
+	t.Log("Connected to Avalanche Fuji successfully")
 }
