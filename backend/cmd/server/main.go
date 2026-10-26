@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"unihack-backend/internal/avalanche"
 	"unihack-backend/internal/handlers"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,6 +14,13 @@ import (
 )
 
 func main() {
+	avalancheClient, err := avalanche.InitClient()
+	if err != nil {
+		log.Printf("Cannot initialize Avalanche client: %v", err)
+		return
+	}
+	defer avalancheClient.Close()
+
 	app := fiber.New(fiber.Config{
 		ErrorHandler: handlers.ErrorHandler,
 		ReadTimeout:  10 * time.Second,
@@ -40,5 +48,7 @@ func main() {
 	app.Post("/api/chat", chatHandler)
 
 	log.Println("Fiber server is running at http://localhost:8080")
-	log.Fatal(app.Listen(":8080"))
+	if err := app.Listen(":8080"); err != nil {
+		log.Printf("Server stopped: &v", err)
+	}
 }
