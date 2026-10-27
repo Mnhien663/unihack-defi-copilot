@@ -1,0 +1,11 @@
+repository=https://github.com/ava-labs/avalanchego.git
+release_tag=v1.15.2
+tag_object=15b2b9e8f7c94c4c1fd384d1e295f8e6988cc5d4
+commit=4bb5c1dc13e1b6ff4eaf49fe8674666fbb342a17
+subnet_evm_path=graft/subnet-evm
+go_directive=1.26.10
+plugin_protocol=47
+target_platform=linux/amd64
+build_verified=false
+local_execution_verified=false
+fuji_l1_execution_verified=false
