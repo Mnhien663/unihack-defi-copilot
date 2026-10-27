@@ -1,0 +1,20 @@
+{
+  "network": "fuji",
+  "chainId": 43113,
+  "contracts": {
+    "DemoToken": {
+      "address": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+      "deploymentTransaction": "0xc522af1f87362c123dec3df453e154970d429357e008a46a2734e2c26ede81d3",
+      "initialOwner": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "name": "DeFi Copilot Demo Token",
+      "symbol": "DDEMO",
+      "decimals": 18,
+      "demo": true,
+      "verification": {
+        "provider": "Sourcify",
+        "status": "verified",
+        "url": "https://sourcify.dev/server/repo-ui/43113/0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A"
+        }
+    }
+  }
+}
