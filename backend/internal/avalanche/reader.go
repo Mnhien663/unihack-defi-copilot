@@ -39,7 +39,7 @@ func GetNativeBalance(
 
 	walletAddress = strings.TrimSpace(walletAddress)
 	if !common.IsHexAddress(walletAddress) {
-		return nil, fmt.Errorf("invalid wallet address")
+		return nil, fmt.Errorf("%w: wallet", ErrInvalidAddress)
 	}
 
 	address := common.HexToAddress(walletAddress)

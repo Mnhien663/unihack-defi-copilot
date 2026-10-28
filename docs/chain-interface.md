@@ -37,6 +37,9 @@ these definitions do not replace the chat API or pending_action schema.
 ## Verified capabilities
 
 - RPC: Fuji chain ID, latest block and native balance.
+  Go ERC-20 balanceOf, allowance and decimals reads were also
+  checked against direct JSON-RPC calls at block 60155048.
+  See the 2026-10-28 handoff below.
 - Data API: native balance and paginated transaction history.
 - LFJ: direct USDT/USDC quotes through Router and Quoter.
 - Aave: USDC approve, supply and withdraw using the test deployer.
@@ -128,3 +131,188 @@ Intermediate token-path discovery is not implemented.
 - Separate approvals and protocol calls require separate transactions.
 - PreparedTransaction is not the final pending_action schema.
 - Allowlist, chain, wallet and calldata validation must occur before signing.
+
+## RPC adapter handoff — 2026-10-28
+
+### Implementation status
+
+Low-level RPC functions are available in the avalanche package.
+They do not yet implement the business-facing ChainReader,
+SwapQuoter, LendingPositionReader or VaultPositionReader interfaces.
+
+RPCReader is defined in types.go. It exposes ChainID, BlockNumber,
+BalanceAt and CallContract for real clients and test mocks.
+
+### Configuration and client lifecycle
+
+Environment settings:
+
+| Variable | Default | Requirement |
+|---|---|---|
+| AVALANCHE_RPC_URL | None | Required RPC URL |
+| AVALANCHE_CHAIN_ID | 43113 | Positive expected chain ID |
+| AVALANCHE_RPC_TIMEOUT | 5s | Positive Go duration |
+
+Public functions:
+
+```go
+LoadRPCConfig() (RPCConfig, error)
+
+InitClient() (*ethclient.Client, error)
+
+NewRPCClient(
+    ctx context.Context,
+    cfg RPCConfig,
+) (*ethclient.Client, error)
+```
+
+InitClient loads environment settings and calls NewRPCClient
+with context.Background.
+
+NewRPCClient validates config and checks the endpoint's chain ID.
+Its timeout covers initialization and the startup chain check only.
+It closes the client if the chain check fails.
+
+The caller owns a successfully returned client and must close it.
+Read operations require a caller-provided context with a deadline
+or timeout; the startup timeout does not cover later reads.
+
+### Available read functions
+
+```go
+GetLatestBlockNumber(
+    ctx context.Context,
+    client *ethclient.Client,
+) (uint64, error)
+
+GetNativeBalance(
+    ctx context.Context,
+    client *ethclient.Client,
+    walletAddress string,
+) (*big.Int, error)
+
+GetERC20Balance(
+    ctx context.Context,
+    client RPCReader,
+    tokenAddress string,
+    ownerAddress string,
+    blockNumber *big.Int,
+) (*big.Int, error)
+
+GetERC20Allowance(
+    ctx context.Context,
+    client RPCReader,
+    tokenAddress string,
+    ownerAddress string,
+    spenderAddress string,
+    blockNumber *big.Int,
+) (*big.Int, error)
+
+GetERC20Decimals(
+    ctx context.Context,
+    client RPCReader,
+    tokenAddress string,
+    blockNumber *big.Int,
+) (uint8, error)
+```
+
+ERC-20 reads accept a block number. A nil block number reads
+the latest state.
+
+GetNativeBalance currently reads the latest state only.
+For the fixed-block native-balance evidence below, the live test
+called client.BalanceAt directly with an explicit block number.
+
+These functions read state only. They do not approve, sign
+or broadcast transactions.
+
+### Amount semantics
+
+```go
+ParseRawAmount(value string) (*big.Int, error)
+
+ParseTokenAmount(
+    value string,
+    decimals uint8,
+) (*big.Int, error)
+```
+
+- Raw amounts are unsigned base-10 integers within uint256.
+- ParseTokenAmount converts decimal text to raw units without float64.
+- Excess fractional digits are rejected, without rounding.
+- Signs, scientific notation and whitespace are rejected.
+- Zero is valid for balances, allowances and the parsing helpers.
+- Operations requiring a positive amount must separately reject zero.
+- Convert successful big.Int results with String() for DTO raw fields.
+- Do not guess decimals when metadata cannot be read.
+- A successful decimals value of zero is valid.
+
+### Error handling
+
+Use errors.Is to identify:
+
+| Error | Meaning |
+|---|---|
+| ErrWrongChain | RPC chain ID differs from the configured value |
+| ErrInvalidAddress | Malformed wallet, token, owner or spender address |
+| ErrTokenMetadataUnavailable | Token metadata could not be read or decoded |
+| context.Canceled | Caller canceled the operation |
+| context.DeadlineExceeded | Operation exceeded its deadline |
+
+Decimals RPC failures preserve both the original error and
+ErrTokenMetadataUnavailable.
+
+Always check err before using returned values.
+An error must not be converted into a successful zero balance,
+zero allowance or zero decimals.
+
+### Fuji verification evidence
+
+Fixture:
+backend/internal/avalanche/testdata/fuji_rpc_snapshot_2026-10-28.json
+
+| Field | Value |
+|---|---|
+| Chain ID | 43113 |
+| Block number | 60155048 |
+| Block hex | 0x395e4a8 |
+| Adapter observation time, UTC | 2026-10-28T15:11:21Z |
+| Token | 0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A |
+| Owner | 0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5 |
+| Spender | Same address as owner |
+| Native balance, raw wei | 99999999831919520 |
+| Token balance, raw | 0 |
+| Allowance, raw | 0 |
+| Decimals | 18 |
+
+All four values matched direct JSON-RPC calls through curl
+at the same block and against the same RPC endpoint.
+
+This verifies a separate call path, not an independent RPC provider.
+The token is a demo asset. Using owner as spender verifies the
+allowance read only; it does not demonstrate protocol approval.
+
+The snapshot is historical evidence, not current wallet state.
+
+### Validation
+
+Completed checks:
+
+- Configuration defaults and invalid configuration tests.
+- Correct-chain, wrong-chain and startup-timeout tests.
+- Raw and decimal amount parsing, including uint256 boundaries.
+- ERC-20 calldata, response decoding and invalid-address tests.
+- Metadata failure handling and context error propagation.
+- go test ./... -count=1
+- go test -race ./internal/avalanche/... -count=1
+- go vet ./internal/avalanche/...
+
+To repeat the live snapshot test from backend using Git Bash:
+
+```bash
+AVALANCHE_LIVE_TEST=1 go test ./internal/avalanche/... -run '^TestFujiLiveSnapshot$' -count=1 -v
+```
+
+A new run selects a new block and may produce different balances.
+The live snapshot test is skipped unless explicitly enabled.
+The existing TestInitClient test still requires live Fuji RPC access.
