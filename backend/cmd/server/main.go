@@ -49,6 +49,6 @@ func main() {
 
 	log.Println("Fiber server is running at http://localhost:8080")
 	if err := app.Listen(":8080"); err != nil {
-		log.Printf("Server stopped: &v", err)
+		log.Printf("Server stopped: %v", err)
 	}
 }

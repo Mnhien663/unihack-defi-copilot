@@ -2,8 +2,31 @@ package avalanche
 
 import (
 	"context"
+	"math/big"
 	"time"
+
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 )
+
+// RPCReader defines the RPC operations used by chain adapters.
+type RPCReader interface {
+	ChainID(ctx context.Context) (*big.Int, error)
+
+	BlockNumber(ctx context.Context) (uint64, error)
+
+	BalanceAt(
+		ctx context.Context,
+		account common.Address,
+		blockNumber *big.Int,
+	) (*big.Int, error)
+
+	CallContract(
+		ctx context.Context,
+		msg ethereum.CallMsg,
+		blockNumber *big.Int,
+	) ([]byte, error)
+}
 
 // Asset identifies a token on a specific chain.
 // An empty Address means the chain's native currency.

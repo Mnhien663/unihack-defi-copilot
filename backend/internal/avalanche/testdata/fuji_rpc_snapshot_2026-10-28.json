@@ -1,0 +1,51 @@
+{
+  "chain_id": 43113,
+  "rpc_url": "https://api.avax-test.network/ext/bc/C/rpc",
+  "block_number": 60155048,
+  "block_hex": "0x395e4a8",
+  "observed_at": "2026-10-28T15:11:21Z",
+  "observed_at_source": "adapter_snapshot",
+  "token_address": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+  "owner_address": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+  "spender_address": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+  "adapter_result": {
+    "native_balance_raw": "99999999831919520",
+    "token_balance_raw": "0",
+    "allowance_raw": "0",
+    "decimals": 18
+  },
+  "independent_check": {
+    "method": "direct JSON-RPC batch through curl",
+    "same_rpc_endpoint": true,
+    "same_block": true,
+    "responses": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "0x163457853854ba0"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": "0x0000000000000000000000000000000000000000000000000000000000000012"
+      }
+    ],
+    "matches_adapter": true
+  },
+  "notes": [
+    "Demo token on Fuji C-Chain.",
+    "Owner is also used as spender for this read check.",
+    "This snapshot does not demonstrate approval for a DeFi protocol.",
+    "Independent check uses a separate call path against the same RPC endpoint."
+  ]
+}
