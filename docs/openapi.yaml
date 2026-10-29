@@ -1,0 +1,383 @@
+openapi: 3.1.0
+
+info:
+  title: UniHack DeFi Copilot API
+  version: 0.1.0
+  description: >
+    HTTP contract between the React frontend and the Go AI backend.
+    The current implementation supports Avalanche Fuji chain ID 43113
+    and runs in mock mode.
+  license:
+    name: UNLICENSED
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: /
+    description: Current API origin
+
+security: []
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Check backend health
+      responses:
+        "200":
+          description: Backend is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/chat:
+    post:
+      operationId: createChatMessage
+      summary: Send a message to the DeFi Copilot
+      description: >
+        Validates the chat request and runs the AI agent loop.
+        Write actions are not available yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+            examples:
+              balanceRequest:
+                summary: Request native AVAX balance
+                value:
+                  session_id: demo-session-001
+                  wallet_address: "0x0000000000000000000000000000000000000001"
+                  chain_id: 43113
+                  message: Show my AVAX balance
+                  locale: en
+
+      responses:
+        "200":
+          description: Agent completed the request
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+              examples:
+                mockBalanceResponse:
+                  value:
+                    message: >
+                      Mock mode: your native balance is
+                      2181886544100000121 Wei.
+                    tool_calls:
+                      - call:
+                          id: demo-call-001
+                          name: get_native_balance
+                          arguments:
+                            wallet_address: "0x0000000000000000000000000000000000000001"
+                            chain_id: 43113
+                        decision:
+                          allowed: true
+                          requires_confirmation: false
+                          reason: read tool is allowlisted
+                        result:
+                          data:
+                            wallet_address: "0x0000000000000000000000000000000000000001"
+                            balance:
+                              asset:
+                                chain_id: 43113
+                                symbol: AVAX
+                                decimals: 18
+                              raw: "2181886544100000121"
+                            provenance:
+                              source: mock_chain
+                              chain_id: 43113
+                              block_number: 60034644
+                              observed_at: "2026-10-29T13:15:10Z"
+                              is_demo: true
+                          source: mock_chain
+                          chain_id: 43113
+                          block_number: 60034644
+                          observed_at: "2026-10-29T13:15:10Z"
+                          error: null
+                    pending_action: null
+                    sources:
+                      - name: mock_chain
+                        chain_id: 43113
+                        block_number: 60034644
+                        observed_at: "2026-10-29T13:15:10Z"
+                    request_id: 07970c02-38df-4396-960d-e0660dd3a584
+                    error: null
+
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+        "403":
+          $ref: "#/components/responses/PolicyDenied"
+
+        "408":
+          $ref: "#/components/responses/RequestTimeout"
+
+        "501":
+          $ref: "#/components/responses/WriteNotImplemented"
+
+        "502":
+          $ref: "#/components/responses/AgentFailure"
+
+components:
+  headers:
+    RequestID:
+      description: Unique identifier for tracing one HTTP request
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Request JSON or one of its fields is invalid
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChatResponse"
+
+    PolicyDenied:
+      description: The requested tool is not allowed by backend policy
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChatResponse"
+
+    RequestTimeout:
+      description: Request exceeded its execution deadline
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChatResponse"
+
+    WriteNotImplemented:
+      description: Write actions are not available yet
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChatResponse"
+
+    AgentFailure:
+      description: The agent or one of its dependencies failed
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChatResponse"
+
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - service
+        - mode
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: unihack-backend
+        mode:
+          type: string
+          enum:
+            - mock
+
+    ChatRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - wallet_address
+        - chain_id
+        - message
+        - locale
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+        wallet_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{40}$"
+        chain_id:
+          type: integer
+          const: 43113
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        locale:
+          type: string
+          enum:
+            - vi
+            - en
+
+    ChatResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - tool_calls
+        - pending_action
+        - sources
+        - request_id
+        - error
+      properties:
+        message:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolExecution"
+        pending_action:
+          oneOf:
+            - $ref: "#/components/schemas/PendingAction"
+            - type: "null"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Source"
+        request_id:
+          type: string
+          format: uuid
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ErrorDetail"
+            - type: "null"
+
+    ToolExecution:
+      type: object
+      additionalProperties: false
+      required:
+        - call
+        - decision
+        - result
+      properties:
+        call:
+          $ref: "#/components/schemas/ToolCall"
+        decision:
+          $ref: "#/components/schemas/PolicyDecision"
+        result:
+          $ref: "#/components/schemas/ToolResult"
+
+    ToolCall:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - arguments
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: object
+          additionalProperties: true
+
+    PolicyDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - allowed
+        - requires_confirmation
+        - reason
+      properties:
+        allowed:
+          type: boolean
+        requires_confirmation:
+          type: boolean
+        reason:
+          type: string
+
+    ToolResult:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - source
+        - chain_id
+        - block_number
+        - observed_at
+        - error
+      properties:
+        data:
+          description: Tool-specific structured data
+        source:
+          type: string
+        chain_id:
+          type: integer
+        block_number:
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+        observed_at:
+          type: string
+          format: date-time
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ErrorDetail"
+            - type: "null"
+
+    Source:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - chain_id
+        - block_number
+        - observed_at
+      properties:
+        name:
+          type: string
+        chain_id:
+          type: integer
+        block_number:
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: "null"
+        observed_at:
+          type: string
+          format: date-time
+
+    PendingAction:
+      type: object
+      description: >
+        Reserved for a future unsigned write action that requires
+        explicit wallet review and confirmation.
+      additionalProperties: true
+
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string

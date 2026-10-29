@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"strings"
+
+	"unihack-backend/internal/ai"
 	"unihack-backend/internal/avalanche"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -9,6 +13,8 @@ import (
 )
 
 const maxMessageLength = 2000
+
+var ErrNilChatRunner = errors.New("chat runner is nil")
 
 type ChatRequest struct {
 	SessionID     string `json:"session_id"`
@@ -30,6 +36,32 @@ type ChatResponse struct {
 	Sources       []any        `json:"sources"`
 	RequestID     string       `json:"request_id"`
 	Error         *ErrorDetail `json:"error"`
+}
+
+// ChatRunner is the HTTP boundary for the AI application layer.
+type ChatRunner interface {
+	Run(
+		ctx context.Context,
+		input ai.AgentInput,
+	) (ai.AgentOutput, error)
+}
+
+// echoChatRunner temporarily preserves the old endpoint behavior.
+// main.go will be switched to an injected Agent after mock wiring is ready.
+type echoChatRunner struct{}
+
+func (echoChatRunner) Run(
+	ctx context.Context,
+	input ai.AgentInput,
+) (ai.AgentOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return ai.AgentOutput{}, err
+	}
+
+	return ai.AgentOutput{
+		Message:        input.Message,
+		ToolExecutions: []ai.ToolExecution{},
+	}, nil
 }
 
 func getRequestID(c *fiber.Ctx) string {
@@ -97,7 +129,27 @@ func validateChatRequest(req *ChatRequest) (string, string) {
 	return "", ""
 }
 
+func NewChatHandler(
+	runner ChatRunner,
+) (fiber.Handler, error) {
+	if runner == nil {
+		return nil, ErrNilChatRunner
+	}
+
+	return func(c *fiber.Ctx) error {
+		return handleChat(c, runner)
+	}, nil
+}
+
+// HandleChat preserves compatibility until main.go injects an Agent.
 func HandleChat(c *fiber.Ctx) error {
+	return handleChat(c, echoChatRunner{})
+}
+
+func handleChat(
+	c *fiber.Ctx,
+	runner ChatRunner,
+) error {
 	req := new(ChatRequest)
 
 	if err := c.BodyParser(req); err != nil {
@@ -119,12 +171,79 @@ func HandleChat(c *fiber.Ctx) error {
 		)
 	}
 
-	// TODO: Replace this echo response with the AI agent loop.
+	output, err := runner.Run(
+		c.UserContext(),
+		ai.AgentInput{
+			SessionID:     req.SessionID,
+			WalletAddress: req.WalletAddress,
+			ChainID:       uint64(req.ChainID),
+			Message:       req.Message,
+			Locale:        req.Locale,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return sendError(
+				c,
+				fiber.StatusRequestTimeout,
+				"REQUEST_TIMEOUT",
+				"request timed out",
+			)
+
+		case errors.Is(err, ai.ErrPolicyDenied):
+			return sendError(
+				c,
+				fiber.StatusForbidden,
+				"TOOL_POLICY_DENIED",
+				"the requested tool is not allowed",
+			)
+
+		default:
+			return sendError(
+				c,
+				fiber.StatusBadGateway,
+				"AGENT_ERROR",
+				"the AI agent could not complete the request",
+			)
+		}
+	}
+
+	// A confirmation response needs a complete pending_action contract.
+	// Until write tools are implemented, fail safely.
+	if output.RequiresConfirmation {
+		return sendError(
+			c,
+			fiber.StatusNotImplemented,
+			"PENDING_ACTION_NOT_IMPLEMENTED",
+			"write actions are not available yet",
+		)
+	}
+
+	toolCalls := make([]any, 0, len(output.ToolExecutions))
+	sources := make([]any, 0, len(output.ToolExecutions))
+
+	for _, execution := range output.ToolExecutions {
+		toolCalls = append(toolCalls, execution)
+
+		if execution.Result.Source != "" {
+			sources = append(
+				sources,
+				fiber.Map{
+					"name":         execution.Result.Source,
+					"chain_id":     execution.Result.ChainID,
+					"block_number": execution.Result.BlockNumber,
+					"observed_at":  execution.Result.ObservedAt,
+				},
+			)
+		}
+	}
+
 	return c.Status(fiber.StatusOK).JSON(ChatResponse{
-		Message:       req.Message,
-		ToolCalls:     []any{},
+		Message:       output.Message,
+		ToolCalls:     toolCalls,
 		PendingAction: nil,
-		Sources:       []any{},
+		Sources:       sources,
 		RequestID:     getRequestID(c),
 		Error:         nil,
 	})
