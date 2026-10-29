@@ -30,7 +30,11 @@ services:
      - DB_PASSWORD=${DB_PASSWORD}
      - DB_NAME=deficopilot_db
     # Ket noi AI
-     - AI_API_KEY=${AI_API_KEY}
+     - AI_PROVIDER=${AI_PROVIDER:-mock}
+     - OPENAI_API_KEY=${OPENAI_API_KEY}
+     - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+     - GEMINI_API_KEY=${GEMINI_API_KEY}
+     - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-flash-preview}
     # Ket noi Avalanche
      - AVALANCHE_RPC_URL=${AVALANCHE_RPC_URL}
      - SNOWTRACE_API_KEY=${SNOWTRACE_API_KEY}

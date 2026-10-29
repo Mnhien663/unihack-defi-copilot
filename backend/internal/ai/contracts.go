@@ -33,9 +33,10 @@ type ToolDefinition struct {
 
 // ToolCall is a structured request from an LLM to execute a tool.
 type ToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Arguments     json.RawMessage `json:"arguments"`
+	ProviderState []byte          `json:"-"`
 }
 
 // LLMRequest is independent from OpenAI, Gemini or another provider.
