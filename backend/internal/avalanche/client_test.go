@@ -11,22 +11,45 @@ import (
 )
 
 func TestInitClient(t *testing.T) {
-	t.Setenv(
-		"AVALANCHE_RPC_URL",
-		"https://api.avax-test.network/ext/bc/C/rpc",
-	)
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error("could not decode RPC request")
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+
+			if request.Method != "eth_chainId" {
+				t.Errorf("unexpected RPC method: %s", request.Method)
+				http.Error(w, "unexpected method", http.StatusBadRequest)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"result":  "0xa869",
+			})
+		},
+	))
+	defer server.Close()
+
+	t.Setenv("AVALANCHE_RPC_URL", server.URL)
 
 	client, err := InitClient()
 	if err != nil {
 		t.Fatalf("InitClient() returned error: %v", err)
 	}
-	defer client.Close()
-
 	if client == nil {
 		t.Fatal("InitClient() returned a nil client")
 	}
-
-	t.Log("Connected to Avalanche Fuji successfully")
+	defer client.Close()
 }
 
 func TestNewRPCClientChainID(t *testing.T) {

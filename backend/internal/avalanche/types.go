@@ -49,9 +49,11 @@ type TokenAmount struct {
 // ObservedAt is the observation time, not the block timestamp.
 type Provenance struct {
 	Source      string    `json:"source"`
+	SourceType  string    `json:"source_type"`
 	ChainID     uint64    `json:"chain_id"`
 	BlockNumber *uint64   `json:"block_number,omitempty"`
 	ObservedAt  time.Time `json:"observed_at"`
+	Mode        string    `json:"mode"`
 	IsDemo      bool      `json:"is_demo"`
 }
 
