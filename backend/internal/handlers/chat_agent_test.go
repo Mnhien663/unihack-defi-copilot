@@ -150,6 +150,18 @@ func TestInjectedChatHandlerRunsAgent(t *testing.T) {
 		)
 	}
 
+	if runner.received.RequestID == "" {
+		t.Fatal("agent received an empty request ID")
+	}
+
+	if runner.received.RequestID != body.RequestID {
+		t.Fatalf(
+			"agent request ID = %q, response request ID = %q",
+			runner.received.RequestID,
+			body.RequestID,
+		)
+	}
+
 	if runner.received.ChainID != 43113 {
 		t.Fatalf(
 			"received chain ID = %d, want 43113",

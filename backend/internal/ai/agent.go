@@ -8,20 +8,28 @@ import (
 	"strings"
 )
 
-const maxAgentIterations = 4
+const (
+	maxAgentIterations = 4
+	maxAgentToolCalls  = 4
+)
 
 var (
-	ErrNilLLMClient       = errors.New("LLM client is nil")
-	ErrNilToolRegistry    = errors.New("tool registry is nil")
-	ErrNilMemoryStore     = errors.New("memory store is nil")
-	ErrNilPolicyEngine    = errors.New("policy engine is nil")
-	ErrInvalidAgentInput  = errors.New("agent input is invalid")
-	ErrEmptyLLMResponse   = errors.New("LLM returned an empty response")
-	ErrPolicyDenied       = errors.New("tool call denied by policy")
-	ErrMaxAgentIterations = errors.New("maximum agent iterations reached")
+	ErrNilLLMClient           = errors.New("LLM client is nil")
+	ErrNilToolRegistry        = errors.New("tool registry is nil")
+	ErrNilMemoryStore         = errors.New("memory store is nil")
+	ErrNilPolicyEngine        = errors.New("policy engine is nil")
+	ErrInvalidAgentInput      = errors.New("agent input is invalid")
+	ErrEmptyLLMResponse       = errors.New("LLM returned an empty response")
+	ErrPolicyDenied           = errors.New("tool call denied by policy")
+	ErrMaxAgentIterations     = errors.New("maximum agent iterations reached")
+	ErrMaxAgentToolCalls      = errors.New("maximum agent tool calls reached")
+	ErrParallelWriteCalls     = errors.New("parallel write tool calls are not allowed")
+	ErrAgentMissingToolCallID = errors.New("agent tool call ID is required")
+	ErrDuplicateToolCallID    = errors.New("duplicate tool call ID")
 )
 
 type AgentInput struct {
+	RequestID     string
 	SessionID     string
 	WalletAddress string
 	ChainID       uint64
@@ -82,6 +90,7 @@ func (a *Agent) Run(
 	ctx context.Context,
 	input AgentInput,
 ) (AgentOutput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
 	input.SessionID = strings.TrimSpace(input.SessionID)
 	input.WalletAddress = strings.TrimSpace(input.WalletAddress)
 	input.Message = strings.TrimSpace(input.Message)
@@ -122,6 +131,8 @@ func (a *Agent) Run(
 	executions := make([]ToolExecution, 0)
 	requiresConfirmation := false
 	definitions := a.tools.Definitions()
+	toolCallCount := 0
+	seenToolCallIDs := make(map[string]struct{})
 
 	for iteration := 0; iteration < maxAgentIterations; iteration++ {
 		requestMessages := make([]Message, len(messages))
@@ -176,6 +187,19 @@ func (a *Agent) Run(
 			}, nil
 		}
 
+		remainingToolCalls := maxAgentToolCalls - toolCallCount
+
+		if len(response.ToolCalls) > remainingToolCalls {
+			return AgentOutput{}, fmt.Errorf(
+				"%w: got %d new calls with %d remaining",
+				ErrMaxAgentToolCalls,
+				len(response.ToolCalls),
+				remainingToolCalls,
+			)
+		}
+
+		toolCallCount += len(response.ToolCalls)
+
 		messages = append(
 			messages,
 			Message{
@@ -185,7 +209,36 @@ func (a *Agent) Run(
 			},
 		)
 
-		for _, call := range response.ToolCalls {
+		decisions := make(
+			[]PolicyDecision,
+			len(response.ToolCalls),
+		)
+
+		writeCallCount := 0
+
+		// Preflight the complete batch before executing any tool.
+		for index, call := range response.ToolCalls {
+			callID := strings.TrimSpace(call.ID)
+
+			if callID == "" {
+				return AgentOutput{}, fmt.Errorf(
+					"%w: tool %q",
+					ErrAgentMissingToolCallID,
+					call.Name,
+				)
+			}
+
+			if _, exists := seenToolCallIDs[callID]; exists {
+				return AgentOutput{}, fmt.Errorf(
+					"%w: %s",
+					ErrDuplicateToolCallID,
+					callID,
+				)
+			}
+
+			seenToolCallIDs[callID] = struct{}{}
+			response.ToolCalls[index].ID = callID
+
 			decision, err := a.policies.Evaluate(
 				ctx,
 				PolicyRequest{
@@ -208,6 +261,25 @@ func (a *Agent) Run(
 					decision.Reason,
 				)
 			}
+
+			if decision.RequiresConfirmation {
+				writeCallCount++
+			}
+
+			decisions[index] = decision
+		}
+
+		if writeCallCount > 1 {
+			return AgentOutput{}, fmt.Errorf(
+				"%w: got %d write calls",
+				ErrParallelWriteCalls,
+				writeCallCount,
+			)
+		}
+
+		// Read tools are intentionally executed sequentially for easier debugging.
+		for index, call := range response.ToolCalls {
+			decision := decisions[index]
 
 			if decision.RequiresConfirmation {
 				requiresConfirmation = true

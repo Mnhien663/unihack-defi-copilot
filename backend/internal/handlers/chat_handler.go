@@ -174,6 +174,7 @@ func handleChat(
 	output, err := runner.Run(
 		c.UserContext(),
 		ai.AgentInput{
+			RequestID:     getRequestID(c),
 			SessionID:     req.SessionID,
 			WalletAddress: req.WalletAddress,
 			ChainID:       uint64(req.ChainID),
