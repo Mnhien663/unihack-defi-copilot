@@ -30,12 +30,12 @@ type ErrorDetail struct {
 }
 
 type ChatResponse struct {
-	Message       string       `json:"message"`
-	ToolCalls     []any        `json:"tool_calls"`
-	PendingAction any          `json:"pending_action"`
-	Sources       []any        `json:"sources"`
-	RequestID     string       `json:"request_id"`
-	Error         *ErrorDetail `json:"error"`
+	Message       string            `json:"message"`
+	ToolCalls     []any             `json:"tool_calls"`
+	PendingAction *ai.PendingAction `json:"pending_action"`
+	Sources       []any             `json:"sources"`
+	RequestID     string            `json:"request_id"`
+	Error         *ErrorDetail      `json:"error"`
 }
 
 // ChatRunner is the HTTP boundary for the AI application layer.
@@ -210,14 +210,23 @@ func handleChat(
 		}
 	}
 
-	// A confirmation response needs a complete pending_action contract.
-	// Until write tools are implemented, fail safely.
-	if output.RequiresConfirmation {
+	if output.RequiresConfirmation && output.PendingAction == nil {
 		return sendError(
 			c,
-			fiber.StatusNotImplemented,
-			"PENDING_ACTION_NOT_IMPLEMENTED",
-			"write actions are not available yet",
+			fiber.StatusBadGateway,
+			"INVALID_PENDING_ACTION",
+			"the agent returned an incomplete pending action",
+		)
+	}
+
+	if output.PendingAction != nil &&
+		(!output.RequiresConfirmation ||
+			!output.PendingAction.RequiresConfirmation) {
+		return sendError(
+			c,
+			fiber.StatusBadGateway,
+			"INVALID_PENDING_ACTION",
+			"the agent returned an unsafe pending action",
 		)
 	}
 
@@ -243,7 +252,7 @@ func handleChat(
 	return c.Status(fiber.StatusOK).JSON(ChatResponse{
 		Message:       output.Message,
 		ToolCalls:     toolCalls,
-		PendingAction: nil,
+		PendingAction: output.PendingAction,
 		Sources:       sources,
 		RequestID:     getRequestID(c),
 		Error:         nil,

@@ -187,3 +187,110 @@ func TestNewChatHandlerRejectsNilRunner(t *testing.T) {
 		)
 	}
 }
+
+func TestInjectedChatHandlerReturnsPendingAction(t *testing.T) {
+	runner := &mockChatRunner{
+		output: ai.AgentOutput{
+			Message:        "The action has been prepared but not executed.",
+			ToolExecutions: []ai.ToolExecution{},
+			PendingAction: &ai.PendingAction{
+				RequestID:  "request-write-001",
+				ToolCallID: "swap-call-001",
+				ToolName:   "prepare_swap",
+				Arguments: json.RawMessage(`{
+					"chain_id": 43113,
+					"amount": "1",
+					"token_in": "AVAX",
+					"token_out": "DDEMO"
+				}`),
+				ChainID:              43113,
+				WalletAddress:        "0x0000000000000000000000000000000000000001",
+				RequiresConfirmation: true,
+			},
+			RequiresConfirmation: true,
+		},
+	}
+
+	handler, err := NewChatHandler(runner)
+	if err != nil {
+		t.Fatalf("NewChatHandler() returned error: %v", err)
+	}
+
+	app := fiber.New()
+	app.Use(requestid.New())
+	app.Post("/api/v1/chat", handler)
+
+	request := httptest.NewRequest(
+		fiber.MethodPost,
+		"/api/v1/chat",
+		strings.NewReader(`{
+			"session_id": "write-session",
+			"wallet_address":
+			"0x0000000000000000000000000000000000000001",
+			"chain_id": 43113,
+			"message":
+			"Prepare a swap of exactly 1 AVAX to DDEMO.",
+			"locale": "en"
+		}`),
+	)
+
+	request.Header.Set(
+		fiber.HeaderContentType,
+		fiber.MIMEApplicationJSON,
+	)
+
+	response, err := app.Test(request)
+	if err != nil {
+		t.Fatalf("app.Test() returned error: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != fiber.StatusOK {
+		t.Fatalf(
+			"status = %d, want 200",
+			response.StatusCode,
+		)
+	}
+
+	var body ChatResponse
+
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("could not decode response: %v", err)
+	}
+
+	if body.PendingAction == nil {
+		t.Fatal("response is missing pending_action")
+	}
+
+	if body.PendingAction.ToolName != "prepare_swap" {
+		t.Fatalf(
+			"pending tool = %q, want prepare_swap",
+			body.PendingAction.ToolName,
+		)
+	}
+
+	if body.PendingAction.ToolCallID != "swap-call-001" {
+		t.Fatalf(
+			"tool call ID = %q, want swap-call-001",
+			body.PendingAction.ToolCallID,
+		)
+	}
+
+	if !body.PendingAction.RequiresConfirmation {
+		t.Fatal("pending action must require confirmation")
+	}
+
+	if len(body.ToolCalls) != 0 {
+		t.Fatalf(
+			"executed tool calls = %d, want 0",
+			len(body.ToolCalls),
+		)
+	}
+
+	if body.Error != nil {
+		t.Fatalf(
+			"response error = %+v, want nil",
+			body.Error,
+		)
+	}
+}
