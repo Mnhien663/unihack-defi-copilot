@@ -719,3 +719,304 @@ func TestDataAPIERC20Balances(t *testing.T) {
 		})
 	}
 }
+
+func TestDataAPINativeBalanceRejectsHTTPAndJSONErrors(t *testing.T) {
+	const wallet = "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5"
+
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "unauthorized",
+			status:  http.StatusUnauthorized,
+			body:    `{"message":"unauthorized"}`,
+			wantErr: "HTTP 401",
+		},
+		{
+			name:    "malformed JSON",
+			status:  http.StatusOK,
+			body:    `{"nativeTokenBalance":`,
+			wantErr: "decode Data API native balance",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+				},
+			))
+			defer server.Close()
+
+			client := NewDataAPIClient("")
+			client.baseURL = server.URL
+
+			balance, err := client.GetNativeBalance(
+				context.Background(), wallet,
+			)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v",
+					tt.wantErr, err)
+			}
+			if balance != nil {
+				t.Error("expected nil balance on error")
+			}
+			if calls != 1 {
+				t.Errorf("requests = %d, want 1; must not retry", calls)
+			}
+		})
+	}
+}
+
+func TestDataAPIReadRetry(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		statuses   []int
+		retryAfter string
+		wantCalls  int
+		wantStatus int
+		wantErr    bool
+	}{
+		{
+			name:       "retry 429 then succeed",
+			method:     http.MethodGet,
+			statuses:   []int{429, 200},
+			retryAfter: "0",
+			wantCalls:  2,
+			wantStatus: 200,
+		},
+		{
+			name:       "stop after second 429",
+			method:     http.MethodGet,
+			statuses:   []int{429, 429},
+			retryAfter: "0",
+			wantCalls:  2,
+			wantStatus: 429,
+		},
+		{
+			name:       "do not retry 401",
+			method:     http.MethodGet,
+			statuses:   []int{401},
+			wantCalls:  1,
+			wantStatus: 401,
+		},
+		{
+			name:       "do not retry long Retry-After",
+			method:     http.MethodGet,
+			statuses:   []int{429},
+			retryAfter: "60",
+			wantCalls:  1,
+			wantStatus: 429,
+		},
+		{
+			name:    "reject POST without sending",
+			method:  http.MethodPost,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					if calls > len(tt.statuses) {
+						t.Error("unexpected extra request")
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					if tt.retryAfter != "" {
+						w.Header().Set("Retry-After", tt.retryAfter)
+					}
+					w.WriteHeader(tt.statuses[calls-1])
+				},
+			))
+			defer server.Close()
+
+			client := NewDataAPIClient("")
+			req, err := http.NewRequestWithContext(
+				context.Background(), tt.method, server.URL, nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			resp, err := client.doRead(req)
+			if resp != nil {
+				defer resp.Body.Close()
+			}
+
+			if calls != tt.wantCalls {
+				t.Errorf("requests = %d, want %d", calls, tt.wantCalls)
+			}
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp == nil {
+				t.Fatal("expected HTTP response")
+			}
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("HTTP status = %d, want %d",
+					resp.StatusCode, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestDataAPIReadRetryStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	calls := 0
+	client := NewDataAPIClient("")
+	client.httpClient.Transport = dataAPITestTransport(
+		func(req *http.Request) (*http.Response, error) {
+			calls++
+			cancel()
+
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Body:       io.NopCloser(strings.NewReader("{}")),
+				Header:     make(http.Header),
+			}, nil
+		},
+	)
+
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodGet, "https://example.invalid", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.doRead(req)
+	if resp != nil {
+		resp.Body.Close()
+		t.Error("expected nil response on cancellation")
+	}
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("requests = %d, want 1", calls)
+	}
+}
+
+func TestDataAPIReadBudget(t *testing.T) {
+	tests := []struct {
+		name      string
+		limit     uint64
+		status    int
+		wantCalls int
+		wantErr   bool
+	}{
+		{
+			name:      "one successful request",
+			limit:     1,
+			status:    http.StatusOK,
+			wantCalls: 1,
+		},
+		{
+			name:    "zero budget blocks request",
+			limit:   0,
+			status:  http.StatusOK,
+			wantErr: true,
+		},
+		{
+			name:      "retry blocked when budget exhausted",
+			limit:     1,
+			status:    http.StatusTooManyRequests,
+			wantCalls: 1,
+			wantErr:   true,
+		},
+		{
+			name:      "retry consumes second attempt",
+			limit:     2,
+			status:    http.StatusTooManyRequests,
+			wantCalls: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			client := NewDataAPIClient("")
+			client.readLimit = tt.limit
+			client.httpClient.Transport = dataAPITestTransport(
+				func(req *http.Request) (*http.Response, error) {
+					calls++
+					header := make(http.Header)
+					header.Set("Retry-After", "0")
+					return &http.Response{
+						StatusCode: tt.status,
+						Body:       io.NopCloser(strings.NewReader("{}")),
+						Header:     header,
+					}, nil
+				},
+			)
+
+			req, err := http.NewRequestWithContext(
+				context.Background(),
+				http.MethodGet,
+				"https://example.invalid",
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			resp, err := client.doRead(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+
+			if tt.wantErr {
+				if err == nil ||
+					!strings.Contains(err.Error(), "budget exhausted") {
+					t.Fatalf("expected budget error, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+
+			if calls != tt.wantCalls {
+				t.Errorf("requests = %d, want %d", calls, tt.wantCalls)
+			}
+
+			attempts, limit := client.ReadUsage()
+			if attempts != uint64(tt.wantCalls) || limit != tt.limit {
+				t.Errorf("usage = %d/%d, want %d/%d",
+					attempts, limit, tt.wantCalls, tt.limit)
+			}
+
+			// All cases have now consumed their available budget.
+			resp, err = client.doRead(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if err == nil ||
+				!strings.Contains(err.Error(), "budget exhausted") {
+				t.Fatalf("expected budget error on next call, got %v", err)
+			}
+			if calls != tt.wantCalls {
+				t.Error("exhausted budget must not send another request")
+			}
+		})
+	}
+}

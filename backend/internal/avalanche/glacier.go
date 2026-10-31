@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -18,9 +19,12 @@ const dataAPIBaseURL = "https://data-api.avax.network"
 
 // DataAPIClient calls Avalanche's indexed Data API.
 type DataAPIClient struct {
-	httpClient *http.Client
-	apiKey     string
-	baseURL    string
+	httpClient   *http.Client
+	apiKey       string
+	baseURL      string
+	mu           sync.Mutex
+	readAttempts uint64
+	readLimit    uint64
 }
 
 // DataAPINativeBalance keeps the balance in raw units.
@@ -42,8 +46,9 @@ func NewDataAPIClient(apiKey string) *DataAPIClient {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		apiKey:  strings.TrimSpace(apiKey),
-		baseURL: dataAPIBaseURL,
+		apiKey:    strings.TrimSpace(apiKey),
+		baseURL:   dataAPIBaseURL,
+		readLimit: 100,
 	}
 }
 
@@ -80,7 +85,7 @@ func (c *DataAPIClient) GetNativeBalance(
 		req.Header.Set("x-glacier-api-key", c.apiKey)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRead(req)
 	if err != nil {
 		return nil, fmt.Errorf("request Data API native balance: %w", err)
 	}
@@ -199,7 +204,7 @@ func (c *DataAPIClient) ListTransactions(
 		req.Header.Set("x-glacier-api-key", c.apiKey)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRead(req)
 	if err != nil {
 		return nil, fmt.Errorf("request Data API transactions: %w", err)
 	}
@@ -318,7 +323,7 @@ func (c *DataAPIClient) ListERC20Balances(
 		req.Header.Set("x-glacier-api-key", c.apiKey)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRead(req)
 	if err != nil {
 		return nil, fmt.Errorf("request Data API ERC-20 balances: %w", err)
 	}
@@ -502,4 +507,78 @@ func (c *DataAPIClient) ReadNativeBalance(
 			IsDemo:     false,
 		},
 	}, nil
+}
+
+// doRead retries a GET request once on HTTP 429.
+// Other statuses and transport errors are returned without retry.
+func (c *DataAPIClient) doRead(
+	req *http.Request,
+) (*http.Response, error) {
+	if req.Method != http.MethodGet {
+		return nil, fmt.Errorf("Data API read request must use GET")
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+
+		if err := c.reserveReadAttempt(); err != nil {
+			return nil, err
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusTooManyRequests ||
+			attempt == 1 {
+			return resp, nil
+		}
+
+		// Return long or invalid Retry-After responses to the caller.
+		delay := 250 * time.Millisecond
+		if value := resp.Header.Get("Retry-After"); value != "" {
+			if value == "0" {
+				delay = 0
+			} else {
+				return resp, nil
+			}
+		}
+
+		// Close the first response before sending another request.
+		resp.Body.Close()
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, req.Context().Err()
+		case <-timer.C:
+		}
+	}
+
+	return nil, fmt.Errorf("Data API read attempts exhausted")
+}
+
+// reserveReadAttempt counts an attempt before handing it to HTTP.
+func (c *DataAPIClient) reserveReadAttempt() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.readAttempts >= c.readLimit {
+		return fmt.Errorf("Data API local request budget exhausted")
+	}
+
+	c.readAttempts++
+	return nil
+}
+
+// ReadUsage returns local attempts and the limit for this client instance.
+func (c *DataAPIClient) ReadUsage() (attempts, limit uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.readAttempts, c.readLimit
 }

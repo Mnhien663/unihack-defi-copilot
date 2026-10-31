@@ -79,9 +79,18 @@ Verified against the official rate-limit documentation on 2026-10-28.
 | Unauthenticated | 6,000 | 1,200,000 |
 | Free | 8,000 | 2,000,000 |
 
-Account tier, account-specific limits and current usage remain
-unverified. Published Free limits are reference values, not
-confirmed limits for this account.
+### Account quota verification
+
+- Checked the account dashboard on 2026-10-31.
+- Account tier, account-specific CU limits, and current CU usage
+  were not visible in the inspected interface.
+- These account values remain unverified.
+- Published limits above are reference values recorded on
+  2026-10-28, not confirmed limits for this account.
+- The 60 CU smoke-test estimate is calculated from published
+  endpoint weights; it is not measured account usage.
+- Pagination and retry limits bound attempts per operation;
+  they do not enforce an account-wide daily CU budget.
 
 ### Endpoint weights
 
@@ -119,8 +128,10 @@ https://build.avax.network/docs/api-reference/data-api/rate-limits
 - HTTP client timeout: 10 seconds.
 - Requests use context and check HTTP response status.
 - Response bodies are limited to 1 MiB.
-- Six Data API tests passed, including authentication header
-  verification using a local HTTP test server and a fake key.
+- Local Data API tests passed for valid responses, authentication,
+  pagination, input/response validation, provenance, HTTP errors,
+  malformed JSON, bounded retry, and cancellation.
+- Tests use local HTTP servers or fake transports, not live API calls.
 
 Command, run from `backend/`:
 
@@ -153,8 +164,10 @@ Command, run from `backend/`:
 
 ### History limits
 
-- ReadTransactionHistory makes at most two requests and returns
+- ReadTransactionHistory reads at most two pages and returns
   at most 100 transactions per call, requesting up to 50 per page.
+- Each page allows at most two application-level HTTP attempts,
+  so one history call allows at most four HTTP attempts.
 - Stops early when no continuation cursor remains.
 - Returns Truncated=true and NextPageToken when more pages remain.
 - Rejects repeated cursors.
@@ -190,3 +203,83 @@ Command, run from `backend/`:
   and snapshot provenance.
 - Loading the file does not reverify its independent_check evidence.
 - Snapshot loading is not yet wired into the server or an automatic fallback.
+
+## Bounded read retry
+
+- Native balance, ERC-20 balances, and transaction history use
+  a shared GET-only request helper.
+- Retries HTTP 429 once: at most two attempts per page.
+- Without Retry-After, waits 250 ms before retrying.
+- Retry-After: 0 allows an immediate retry.
+- Other non-empty Retry-After values return HTTP 429 without retry.
+- HTTP 401, other statuses, transport errors, and JSON decoding
+  errors are not retried by this helper.
+- Cancellation during the retry wait prevents a second attempt.
+- POST requests are rejected before sending.
+- Local tests passed for retry success, exhausted attempts,
+  HTTP 401, Retry-After handling, POST rejection, and cancellation.
+- This helper does not implement transaction submission.
+
+## Saved Data API response fixtures
+
+### Native balance
+
+- File: backend/internal/avalanche/testdata/fuji_native_balance.json
+- Response chain ID: 43113.
+- Asset: AVAX, decimals: 18.
+- Raw balance: 99999999903593280 Wei.
+- The file contains no API key.
+- Capture time, HTTP status, request headers, and balance block
+  are not recorded in this fixture.
+
+### Transaction history
+
+- File: backend/internal/avalanche/testdata/fuji_transactions.json
+- Contains the DemoToken deployment transaction:
+  0xc522af1f87362c123dec3df453e154970d429357e008a46a2734e2c26ede81d3
+- Transaction block: 60107076.
+- Includes a continuation cursor; this is not complete history.
+- The file contains no API key.
+- Capture time, HTTP status, and full request parameters
+  are not recorded in this fixture.
+
+### Evidence scope
+
+- These fixtures are separate from the documented
+  2026-10-28 smoke-test run.
+- Endpoint paths are documented under Verified endpoints.
+- Exact original requests cannot be reconstructed from
+  response bodies alone.
+- RPC snapshots are separate evidence and must not be
+  presented as Data API responses or current live data.
+
+## Local request budget
+
+- Each NewDataAPIClient instance allows 100 application-level
+  HTTP attempts by default.
+- Attempts are counted before handing a request to the HTTP client.
+- Retries and transport failures consume attempts.
+- Requests rejected before sending do not consume attempts.
+- Once exhausted, the client rejects further attempts locally.
+- ReadUsage reports attempts and the limit for that instance.
+- Counter updates are protected by a mutex.
+- Local tests passed for exhaustion, blocked requests,
+  and retry accounting.
+
+### Scope
+
+- This is an instance-level request counter, not measured CU usage.
+- It is not an account-wide or daily quota.
+- Creating a new client resets the counter.
+- Multiple instances or processes have separate budgets.
+- Account tier and actual account usage remain unverified.
+
+## Live capture on 2026-10-31
+
+- Native balance request returned HTTP 500.
+- Capture started at 2026-10-31T08:26:48Z.
+- Redacted request details, response body, HTTP status, and
+  capture time are saved under docs/evidence/.
+- This failed attempt does not establish unsupported Fuji indexing.
+- No retry or RPC fallback was performed.
+- Current live availability remains unconfirmed.
