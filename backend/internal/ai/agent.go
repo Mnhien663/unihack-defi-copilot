@@ -26,6 +26,9 @@ var (
 	ErrParallelWriteCalls     = errors.New("parallel write tool calls are not allowed")
 	ErrAgentMissingToolCallID = errors.New("agent tool call ID is required")
 	ErrDuplicateToolCallID    = errors.New("duplicate tool call ID")
+	ErrMixedReadWriteCalls    = errors.New(
+		"read and write tool calls cannot share one batch",
+	)
 )
 
 type AgentInput struct {
@@ -43,9 +46,20 @@ type ToolExecution struct {
 	Result   ToolResult     `json:"result"`
 }
 
+type PendingAction struct {
+	RequestID            string          `json:"request_id"`
+	ToolCallID           string          `json:"tool_call_id"`
+	ToolName             string          `json:"tool_name"`
+	Arguments            json.RawMessage `json:"arguments"`
+	ChainID              uint64          `json:"chain_id"`
+	WalletAddress        string          `json:"wallet_address"`
+	RequiresConfirmation bool            `json:"requires_confirmation"`
+}
+
 type AgentOutput struct {
 	Message              string          `json:"message"`
 	ToolExecutions       []ToolExecution `json:"tool_executions"`
+	PendingAction        *PendingAction  `json:"pending_action"`
 	RequiresConfirmation bool            `json:"requires_confirmation"`
 }
 
@@ -54,6 +68,16 @@ type Agent struct {
 	tools    ToolRegistry
 	memory   MemoryStore
 	policies PolicyEngine
+}
+
+func pendingActionMessage(locale string) string {
+	if strings.EqualFold(strings.TrimSpace(locale), "vi") {
+		return "Hành động đã được chuẩn bị nhưng chưa được thực thi. " +
+			"Vui lòng kiểm tra chi tiết và xác nhận rõ ràng trong ví."
+	}
+
+	return "The action has been prepared but not executed. " +
+		"Review the details and explicitly confirm it in your wallet."
 }
 
 func NewAgent(
@@ -98,6 +122,16 @@ func (a *Agent) Run(
 
 	if input.SessionID == "" || input.Message == "" {
 		return AgentOutput{}, ErrInvalidAgentInput
+	}
+
+	guardrailDecision := EvaluateInputGuardrail(input.Message)
+
+	if !guardrailDecision.Allowed {
+		return AgentOutput{
+			Message:              promptInjectionRefusal(input.Locale),
+			ToolExecutions:       []ToolExecution{},
+			RequiresConfirmation: false,
+		}, nil
 	}
 
 	history, err := a.memory.Load(ctx, input.SessionID)
@@ -277,13 +311,36 @@ func (a *Agent) Run(
 			)
 		}
 
+		if writeCallCount == 1 && len(response.ToolCalls) != 1 {
+			return AgentOutput{}, fmt.Errorf(
+				"%w: got %d calls including one write",
+				ErrMixedReadWriteCalls,
+				len(response.ToolCalls),
+			)
+		}
+
+		if writeCallCount == 1 {
+			call := response.ToolCalls[0]
+
+			return AgentOutput{
+				Message:        pendingActionMessage(input.Locale),
+				ToolExecutions: []ToolExecution{},
+				PendingAction: &PendingAction{
+					RequestID:            input.RequestID,
+					ToolCallID:           call.ID,
+					ToolName:             call.Name,
+					Arguments:            call.Arguments,
+					ChainID:              input.ChainID,
+					WalletAddress:        input.WalletAddress,
+					RequiresConfirmation: true,
+				},
+				RequiresConfirmation: true,
+			}, nil
+		}
+
 		// Read tools are intentionally executed sequentially for easier debugging.
 		for index, call := range response.ToolCalls {
 			decision := decisions[index]
-
-			if decision.RequiresConfirmation {
-				requiresConfirmation = true
-			}
 
 			result, err := a.tools.Execute(
 				ctx,
