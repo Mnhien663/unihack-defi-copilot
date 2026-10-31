@@ -1,18 +1,31 @@
 import { artifacts } from "hardhat";
 import { mkdir, writeFile } from "node:fs/promises";
 
-const artifact = await artifacts.readArtifact("DemoToken");
+const contractNames = [
+  "DemoToken",
+  "AllowanceManager",
+];
 
 const outputDirectory = new URL("../abi/", import.meta.url);
-const outputFile = new URL("DemoToken.json", outputDirectory);
 
 await mkdir(outputDirectory, { recursive: true });
 
-await writeFile(
-  outputFile,
-  JSON.stringify(artifact.abi, null, 2) + "\n",
-  "utf8"
-);
+for (const contractName of contractNames) {
+  const artifact = await artifacts.readArtifact(contractName);
 
-console.log("Exported ABI to contracts/abi/DemoToken.json");
-console.log("ABI entries:", artifact.abi.length);
+  const outputFile = new URL(
+    `${contractName}.json`,
+    outputDirectory
+  );
+
+  await writeFile(
+    outputFile,
+    JSON.stringify(artifact.abi, null, 2) + "\n",
+    "utf8"
+  );
+
+  console.log(
+    `Exported ABI to contracts/abi/${contractName}.json`
+  );
+  console.log("ABI entries:", artifact.abi.length);
+}
