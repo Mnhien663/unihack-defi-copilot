@@ -453,3 +453,330 @@ describe("AllowanceManager", function () {
     expect(await token.balanceOf(managerAddress)).to.equal(0n);
   });
 });
+
+async function setupHarness() {
+  const { ethers } = await network.create();
+
+  const [deployer, alice, bob] = await ethers.getSigners();
+
+  const manager = await ethers.deployContract(
+    "AllowanceManagerHarness",
+    [],
+    deployer
+  );
+  await manager.waitForDeployment();
+
+  const token = await ethers.deployContract("DemoToken", [], deployer);
+  await token.waitForDeployment();
+
+  const tokenAddress = await token.getAddress();
+
+  const block = await ethers.provider.getBlock("latest");
+
+  if (block === null) {
+    throw new Error("Latest block not found");
+  }
+
+  const expiry = block.timestamp + 3600;
+  const amount = ethers.parseUnits("20", 18);
+
+  const setAsAlice = manager.connect(alice).getFunction("setBudget");
+  const setAsBob = manager.connect(bob).getFunction("setBudget");
+  const consumeAsAlice = manager
+    .connect(alice)
+    .getFunction("consumeBudget");
+  const revokeAsAlice = manager.connect(alice).getFunction("revoke");
+
+  await (await setAsAlice(tokenAddress, amount, expiry)).wait();
+
+  return {
+    ethers,
+    manager,
+    alice,
+    bob,
+    tokenAddress,
+    amount,
+    expiry,
+    setAsBob,
+    consumeAsAlice,
+    revokeAsAlice,
+  };
+}
+
+describe("AllowanceManager budget consumption", function () {
+  it("subtracts a successful spend from the remaining budget", async function () {
+    const {
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    const spent = amount / 2n;
+
+    await (await consumeAsAlice(tokenAddress, spent)).wait();
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(amount - spent);
+  });
+
+  it("allows spending exactly the remaining budget", async function () {
+    const {
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    await (await consumeAsAlice(tokenAddress, amount)).wait();
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(0n);
+
+    await expect(
+      consumeAsAlice(tokenAddress, 1n)
+    )
+      .to.be.revertedWithCustomError(manager, "BudgetExceeded")
+      .withArgs(0n, 1n);
+  });
+
+  it("rejects spending one raw unit above the budget", async function () {
+    const {
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    const requested = amount + 1n;
+
+    await expect(
+      consumeAsAlice(tokenAddress, requested)
+    )
+      .to.be.revertedWithCustomError(manager, "BudgetExceeded")
+      .withArgs(amount, requested);
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(amount);
+  });
+
+  it("enforces the cap across multiple spends", async function () {
+    const {
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    const firstSpend = amount / 2n;
+
+    await (await consumeAsAlice(tokenAddress, firstSpend)).wait();
+
+    const available = amount - firstSpend;
+    const requested = available + 1n;
+
+    await expect(
+      consumeAsAlice(tokenAddress, requested)
+    )
+      .to.be.revertedWithCustomError(manager, "BudgetExceeded")
+      .withArgs(available, requested);
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(available);
+
+    await (await consumeAsAlice(tokenAddress, available)).wait();
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(0n);
+  });
+
+  it("does not spend Bob's budget when Alice calls", async function () {
+    const {
+      manager,
+      alice,
+      bob,
+      tokenAddress,
+      amount,
+      expiry,
+      setAsBob,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    const bobAmount = amount * 3n;
+
+    await (await setAsBob(tokenAddress, bobAmount, expiry)).wait();
+    await (await consumeAsAlice(tokenAddress, amount)).wait();
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(0n);
+
+    expect(
+      await manager.remaining(bob.address, tokenAddress)
+    ).to.equal(bobAmount);
+
+    await expect(
+      consumeAsAlice(tokenAddress, 1n)
+    )
+      .to.be.revertedWithCustomError(manager, "BudgetExceeded")
+      .withArgs(0n, 1n);
+
+    expect(
+      await manager.remaining(bob.address, tokenAddress)
+    ).to.equal(bobAmount);
+  });
+
+  it("allows spending immediately before expiry", async function () {
+    const {
+      ethers,
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+      expiry,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    const spent = amount / 2n;
+
+    await ethers.provider.send(
+      "evm_setNextBlockTimestamp",
+      [expiry - 1]
+    );
+
+    await (await consumeAsAlice(tokenAddress, spent)).wait();
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(amount - spent);
+  });
+
+  it("rejects spending exactly at expiry", async function () {
+    const {
+      ethers,
+      manager,
+      tokenAddress,
+      expiry,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    await ethers.provider.send(
+      "evm_setNextBlockTimestamp",
+      [expiry]
+    );
+
+    await expect(
+      consumeAsAlice(tokenAddress, 1n)
+    ).to.be.revertedWithCustomError(manager, "BudgetExpired");
+  });
+
+  it("rejects spending after expiry", async function () {
+    const {
+      ethers,
+      manager,
+      tokenAddress,
+      expiry,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    await ethers.provider.send(
+      "evm_setNextBlockTimestamp",
+      [expiry + 1]
+    );
+
+    await expect(
+      consumeAsAlice(tokenAddress, 1n)
+    ).to.be.revertedWithCustomError(manager, "BudgetExpired");
+  });
+
+  it("rejects spending after revocation", async function () {
+    const {
+      manager,
+      tokenAddress,
+      consumeAsAlice,
+      revokeAsAlice,
+    } = await setupHarness();
+
+    await (await revokeAsAlice(tokenAddress)).wait();
+
+    await expect(
+      consumeAsAlice(tokenAddress, 1n)
+    ).to.be.revertedWithCustomError(manager, "BudgetExpired");
+  });
+
+  it("rejects spending from an unset budget", async function () {
+    const {
+      manager,
+      bob,
+      tokenAddress,
+    } = await setupHarness();
+
+    const consumeAsBob = manager
+      .connect(bob)
+      .getFunction("consumeBudget");
+
+    await expect(
+      consumeAsBob(tokenAddress, 1n)
+    ).to.be.revertedWithCustomError(manager, "BudgetExpired");
+  });
+
+  it("rejects zero spending without changing the budget", async function () {
+    const {
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    await expect(
+      consumeAsAlice(tokenAddress, 0n)
+    ).to.be.revertedWithCustomError(manager, "InvalidAmount");
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(amount);
+  });
+
+  it("rejects the zero token address", async function () {
+    const {
+      ethers,
+      manager,
+      consumeAsAlice,
+    } = await setupHarness();
+
+    await expect(
+      consumeAsAlice(ethers.ZeroAddress, 1n)
+    ).to.be.revertedWithCustomError(manager, "InvalidToken");
+  });
+
+  it("restores the budget when a later step reverts", async function () {
+    const {
+      manager,
+      alice,
+      tokenAddress,
+      amount,
+    } = await setupHarness();
+
+    const consumeThenRevertAsAlice = manager
+      .connect(alice)
+      .getFunction("consumeThenRevert");
+
+    await expect(
+      consumeThenRevertAsAlice(tokenAddress, amount / 2n)
+    ).to.be.revertedWithCustomError(manager, "ForcedFailure");
+
+    expect(
+      await manager.remaining(alice.address, tokenAddress)
+    ).to.equal(amount);
+  });
+});

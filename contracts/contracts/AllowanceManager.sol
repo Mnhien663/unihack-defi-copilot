@@ -12,6 +12,8 @@ contract AllowanceManager {
     error InvalidToken();
     error InvalidAmount();
     error InvalidExpiry();
+    error BudgetExpired();
+    error BudgetExceeded(uint256 available, uint256 requested);
 
     event BudgetSet(
         address indexed owner,
@@ -71,5 +73,31 @@ contract AllowanceManager {
         }
 
         return budget.remaining;
+    }
+
+    function _consumeBudget(
+        address owner,
+        address token,
+        uint256 amount
+    ) internal {
+        if (token == address(0)) {
+            revert InvalidToken();
+        }
+
+        if (amount == 0) {
+            revert InvalidAmount();
+        }
+
+        Budget storage budget = budgets[owner][token];
+
+        if (block.timestamp >= budget.expiry) {
+            revert BudgetExpired();
+        }
+
+        if (amount > budget.remaining) {
+            revert BudgetExceeded(budget.remaining, amount);
+        }
+
+        budget.remaining -= amount;
     }
 }

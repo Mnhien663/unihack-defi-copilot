@@ -166,8 +166,9 @@ These entry points are not implemented yet.
 - Typed ISwapAdapter and IVaultAdapter interfaces.
 
 ### Verified
-
-15 AllowanceManager tests pass locally, covering:
+28 AllowanceManager tests pass locally: 15 budget-management tests
+and 13 budget-consumption tests. Together with 7 DemoToken tests,
+the contract suite has 35 passing tests.
 
 - Unset budgets.
 - Budget creation, replacement and events.
@@ -185,8 +186,14 @@ These entry points are not implemented yet.
 - Execution must enforce budget, expiry, supported tokens/adapters,
   minimum output, deadline and owner-bound recipient.
 - Execution must include reentrancy protection.
-- Execution tests must cover spending exactly the remaining budget,
-  exceeding it, expiry, revocation and transaction rollback.
+- The internal _consumeBudget function checks and decreases budgets.
+- Its behavior is tested through a local-only harness, including exact
+  cap, over-cap, cumulative spending, expiry, revoke and rollback.
+- executeSwap and executeDeposit must call this function with
+  msg.sender as owner before external interactions.
+- Integration tests must verify those checks in actual execution flows.
+- AllowanceManagerHarness is for local tests only and must not be
+  deployed as the application manager.
 
 ### Dev 1 Handoff
 
