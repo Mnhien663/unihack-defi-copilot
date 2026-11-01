@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"unihack-backend/internal/ai"
+	"unihack-backend/internal/database"
 	"unihack-backend/internal/handlers"
 	"unihack-backend/internal/tools"
 
@@ -23,6 +24,17 @@ const (
 )
 
 func main() {
+	db, err := database.ConnectFromEnv(context.Background())
+	if err != nil {
+		log.Fatalf("Cannot connect to PostgreSQL: %v", err)
+	}
+	defer db.Close()
+
+	memoryStore, err := database.NewPostgresMemoryStore(db)
+	if err != nil {
+		log.Fatalf("Cannot create PostgreSQL memory store: %v", err)
+	}
+
 	registry := tools.NewRegistry()
 
 	nativeBalanceTool, err := tools.NewNativeBalanceTool(
@@ -97,7 +109,7 @@ func main() {
 	agent, err := ai.NewAgent(
 		llmClient,
 		registry,
-		ai.NewInMemoryStore(),
+		memoryStore,
 		policies,
 	)
 	if err != nil {
@@ -124,6 +136,7 @@ func main() {
 			"service":     "unihack-backend",
 			"ai_provider": provider,
 			"data_mode":   "mock",
+			"storage":     "postgres",
 		})
 	})
 

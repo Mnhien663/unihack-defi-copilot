@@ -1,0 +1,9 @@
+BEGIN;
+
+DROP TABLE IF EXISTS eval_runs;
+DROP TABLE IF EXISTS pending_actions;
+DROP TABLE IF EXISTS tool_calls;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS sessions;
+
+COMMIT;
