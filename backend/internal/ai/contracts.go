@@ -17,6 +17,7 @@ const (
 
 // Message is one normalized message inside the AI domain.
 type Message struct {
+	RequestID  string     `json:"-"`
 	Role       Role       `json:"role"`
 	Content    string     `json:"content"`
 	Name       string     `json:"name,omitempty"`
@@ -109,6 +110,34 @@ type MemoryStore interface {
 		ctx context.Context,
 		sessionID string,
 		message Message,
+	) error
+}
+
+type SessionMetadata struct {
+	SessionID     string
+	WalletAddress string
+	ChainID       uint64
+	Locale        string
+}
+
+type SessionInitializer interface {
+	EnsureSession(
+		ctx context.Context,
+		metadata SessionMetadata,
+	) error
+}
+
+type TurnRecord struct {
+	SessionID      string
+	Message        Message
+	ToolExecutions []ToolExecution
+	PendingAction  *PendingAction
+}
+
+type TurnRecorder interface {
+	RecordTurn(
+		ctx context.Context,
+		record TurnRecord,
 	) error
 }
 

@@ -29,6 +29,7 @@ services:
      - DB_USER=admin
      - DB_PASSWORD=${DB_PASSWORD}
      - DB_NAME=deficopilot_db
+     - DB_SSLMODE=${DB_SSLMODE:-disable}
     # Ket noi AI
      - AI_PROVIDER=${AI_PROVIDER:-mock}
      - OPENAI_API_KEY=${OPENAI_API_KEY}
