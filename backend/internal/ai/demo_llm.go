@@ -5,11 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+)
+
+const (
+	demoNativeBalanceToolName = "get_native_balance"
+	demoTokenBalancesToolName = "list_token_balances"
 )
 
 var (
 	ErrDemoLLMNoMessages = errors.New("demo LLM received no messages")
 	ErrDemoLLMNoTools    = errors.New("demo LLM received no tools")
+	ErrDemoLLMNoTool     = errors.New("requested demo tool is unavailable")
 )
 
 type DemoLLMClient struct{}
@@ -40,6 +48,16 @@ func (d *DemoLLMClient) Complete(
 		return LLMResponse{}, ErrDemoLLMNoTools
 	}
 
+	toolName := selectDemoTool(lastMessage.Content)
+
+	if !hasDemoTool(request.Tools, toolName) {
+		return LLMResponse{}, fmt.Errorf(
+			"%w: %s",
+			ErrDemoLLMNoTool,
+			toolName,
+		)
+	}
+
 	arguments, err := json.Marshal(
 		struct {
 			WalletAddress string `json:"wallet_address"`
@@ -63,11 +81,49 @@ func (d *DemoLLMClient) Complete(
 		ToolCalls: []ToolCall{
 			{
 				ID:        "demo-call-001",
-				Name:      request.Tools[0].Name,
+				Name:      toolName,
 				Arguments: arguments,
 			},
 		},
 	}, nil
+}
+
+func selectDemoTool(message string) string {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+
+	tokenKeywords := []string{
+		"erc-20",
+		"erc20",
+		"token balance",
+		"token balances",
+		"list token",
+		"usdc",
+		"ddemo",
+		"danh sách token",
+		"các token",
+		"số dư token",
+	}
+
+	for _, keyword := range tokenKeywords {
+		if strings.Contains(normalized, keyword) {
+			return demoTokenBalancesToolName
+		}
+	}
+
+	return demoNativeBalanceToolName
+}
+
+func hasDemoTool(
+	definitions []ToolDefinition,
+	name string,
+) bool {
+	for _, definition := range definitions {
+		if definition.Name == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (d *DemoLLMClient) finalResponse(
@@ -98,32 +154,19 @@ func (d *DemoLLMClient) finalResponse(
 		}, nil
 	}
 
-	var balanceData struct {
-		Balance struct {
-			Raw string `json:"raw"`
-		} `json:"balance"`
+	var content string
+	var err error
+
+	switch toolMessage.Name {
+	case demoTokenBalancesToolName:
+		content, err = demoTokenBalanceResponse(locale, result)
+
+	default:
+		content, err = demoNativeBalanceResponse(locale, result)
 	}
 
-	if err := json.Unmarshal(
-		result.Data,
-		&balanceData,
-	); err != nil {
-		return LLMResponse{}, fmt.Errorf(
-			"decode demo balance data: %w",
-			err,
-		)
-	}
-
-	content := fmt.Sprintf(
-		"Mock mode: your native balance is %s Wei.",
-		balanceData.Balance.Raw,
-	)
-
-	if locale == "vi" {
-		content = fmt.Sprintf(
-			"Chế độ mock: số dư native của ví là %s Wei.",
-			balanceData.Balance.Raw,
-		)
+	if err != nil {
+		return LLMResponse{}, err
 	}
 
 	return LLMResponse{
@@ -132,6 +175,144 @@ func (d *DemoLLMClient) finalResponse(
 			Content: content,
 		},
 	}, nil
+}
+
+func demoNativeBalanceResponse(
+	locale string,
+	result ToolResult,
+) (string, error) {
+	var data struct {
+		Balance struct {
+			Asset struct {
+				Symbol string `json:"symbol"`
+			} `json:"asset"`
+			Raw       string `json:"raw"`
+			Formatted string `json:"formatted"`
+		} `json:"balance"`
+	}
+
+	if err := json.Unmarshal(result.Data, &data); err != nil {
+		return "", fmt.Errorf(
+			"decode demo native balance data: %w",
+			err,
+		)
+	}
+
+	amount := data.Balance.Formatted
+	if amount == "" {
+		amount = data.Balance.Raw
+	}
+
+	symbol := data.Balance.Asset.Symbol
+	if symbol == "" {
+		symbol = "AVAX"
+	}
+
+	observedAt := formatObservedAt(result.ObservedAt)
+
+	if locale == "vi" {
+		return fmt.Sprintf(
+			"Số dư native là %s %s trên Avalanche Fuji "+
+				"(chain ID %d). Nguồn: %s, quan sát lúc %s.",
+			amount,
+			symbol,
+			result.ChainID,
+			result.Source,
+			observedAt,
+		), nil
+	}
+
+	return fmt.Sprintf(
+		"Your native balance is %s %s on Avalanche Fuji "+
+			"(chain ID %d). Source: %s, observed at %s.",
+		amount,
+		symbol,
+		result.ChainID,
+		result.Source,
+		observedAt,
+	), nil
+}
+
+func demoTokenBalanceResponse(
+	locale string,
+	result ToolResult,
+) (string, error) {
+	var data struct {
+		Balances []struct {
+			Name   string `json:"name"`
+			Amount struct {
+				Asset struct {
+					Symbol string `json:"symbol"`
+				} `json:"asset"`
+				Raw       string `json:"raw"`
+				Formatted string `json:"formatted"`
+			} `json:"amount"`
+		} `json:"balances"`
+	}
+
+	if err := json.Unmarshal(result.Data, &data); err != nil {
+		return "", fmt.Errorf(
+			"decode demo token balances data: %w",
+			err,
+		)
+	}
+
+	tokenDescriptions := make(
+		[]string,
+		0,
+		len(data.Balances),
+	)
+
+	for _, balance := range data.Balances {
+		amount := balance.Amount.Formatted
+		if amount == "" {
+			amount = balance.Amount.Raw
+		}
+
+		symbol := balance.Amount.Asset.Symbol
+		if symbol == "" {
+			symbol = balance.Name
+		}
+
+		tokenDescriptions = append(
+			tokenDescriptions,
+			fmt.Sprintf("%s %s", amount, symbol),
+		)
+	}
+
+	if len(tokenDescriptions) == 0 {
+		tokenDescriptions = append(tokenDescriptions, "none")
+	}
+
+	observedAt := formatObservedAt(result.ObservedAt)
+
+	if locale == "vi" {
+		return fmt.Sprintf(
+			"Các số dư ERC-20 trên Avalanche Fuji "+
+				"(chain ID %d): %s. Nguồn: %s, quan sát lúc %s.",
+			result.ChainID,
+			strings.Join(tokenDescriptions, ", "),
+			result.Source,
+			observedAt,
+		), nil
+	}
+
+	return fmt.Sprintf(
+		"ERC-20 balances on Avalanche Fuji "+
+			"(chain ID %d): %s. Source: %s, observed at %s.",
+		result.ChainID,
+		strings.Join(tokenDescriptions, ", "),
+		result.Source,
+		observedAt,
+	), nil
+}
+
+func formatObservedAt(observedAt time.Time) string {
+	if observedAt.IsZero() {
+		return "unknown"
+	}
+
+	return observedAt.UTC().Format(time.RFC3339)
 }
 
 var _ LLMClient = (*DemoLLMClient)(nil)
