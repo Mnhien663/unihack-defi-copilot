@@ -53,29 +53,11 @@ func GetNativeBalance(
 }
 
 // WeiToAVAX converts Wei to a human-readable AVAX string.
+// WeiToAVAX converts Wei to a human-readable AVAX string.
 func WeiToAVAX(wei *big.Int) (string, error) {
 	if wei == nil {
 		return "", fmt.Errorf("Wei amount is nil")
 	}
 
-	if wei.Sign() < 0 {
-		return "", fmt.Errorf("Wei amount cannot be negative")
-	}
-
-	weiPerAVAX := big.NewInt(1_000_000_000_000_000_000)
-
-	avax := new(big.Rat).SetFrac(
-		new(big.Int).Set(wei),
-		weiPerAVAX,
-	)
-
-	result := avax.FloatString(18)
-	result = strings.TrimRight(result, "0")
-	result = strings.TrimRight(result, ".")
-
-	if result == "" {
-		return "0", nil
-	}
-
-	return result, nil
+	return FormatTokenAmount(wei.String(), 18)
 }

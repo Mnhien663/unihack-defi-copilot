@@ -38,7 +38,8 @@ func newMockNativeBalanceResult() avalanche.NativeBalanceResult {
 				Symbol:   "AVAX",
 				Decimals: 18,
 			},
-			Raw: "2181886544100000121",
+			Raw:       "2181886544100000121",
+			Formatted: "2.181886544100000121",
 		},
 		Provenance: avalanche.Provenance{
 			Source:      "mock_chain",

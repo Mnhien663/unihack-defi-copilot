@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"unihack-backend/internal/ai"
+	"unihack-backend/internal/avalanche"
 	"unihack-backend/internal/database"
 	"unihack-backend/internal/handlers"
 	"unihack-backend/internal/tools"
@@ -20,6 +21,7 @@ import (
 
 const (
 	defaultAIProvider = "mock"
+	defaultDataMode   = "mock"
 	chatTimeout       = 30 * time.Second
 )
 
@@ -37,26 +39,63 @@ func main() {
 
 	registry := tools.NewRegistry()
 
-	nativeBalanceTool, err := tools.NewNativeBalanceTool(
-		tools.NewMockChainClient(),
+	dataMode := strings.ToLower(
+		strings.TrimSpace(os.Getenv("DATA_MODE")),
 	)
-	if err != nil {
+	if dataMode == "" {
+		dataMode = defaultDataMode
+	}
+
+	var nativeClient tools.ChainClient
+	var tokenClient tools.TokenBalanceClient
+
+	switch dataMode {
+	case "mock":
+		mockClient := tools.NewMockChainClient()
+		nativeClient = mockClient
+		tokenClient = mockClient
+
+	case "data_api":
+		dataAPIClient := avalanche.NewDataAPIClient(
+			os.Getenv("AVALANCHE_DATA_API_KEY"),
+		)
+		nativeClient = dataAPIClient
+		tokenClient = dataAPIClient
+
+	default:
 		log.Fatalf(
-			"Cannot create native balance tool: %v",
-			err,
+			"Unsupported DATA_MODE %q; expected mock or data_api",
+			dataMode,
 		)
 	}
 
-	if err := registry.Register(nativeBalanceTool); err != nil {
-		log.Fatalf(
-			"Cannot register native balance tool: %v",
-			err,
-		)
+	nativeBalanceTool, err := tools.NewNativeBalanceTool(nativeClient)
+	if err != nil {
+		log.Fatalf("Cannot create native balance tool: %v", err)
+	}
+
+	tokenBalanceTool, err := tools.NewListTokenBalancesTool(tokenClient)
+	if err != nil {
+		log.Fatalf("Cannot create token balance tool: %v", err)
+	}
+
+	for _, tool := range []ai.Tool{
+		nativeBalanceTool,
+		tokenBalanceTool,
+	} {
+		if err := registry.Register(tool); err != nil {
+			log.Fatalf(
+				"Cannot register tool %q: %v",
+				tool.Definition().Name,
+				err,
+			)
+		}
 	}
 
 	policies := ai.NewStaticPolicyEngine(
 		[]string{
 			tools.NativeBalanceToolName,
+			tools.ListTokenBalancesToolName,
 		},
 		nil,
 	)
@@ -135,7 +174,7 @@ func main() {
 			"status":      "ok",
 			"service":     "unihack-backend",
 			"ai_provider": provider,
-			"data_mode":   "mock",
+			"data_mode":   dataMode,
 			"storage":     "postgres",
 		})
 	})
@@ -151,8 +190,9 @@ func main() {
 	app.Post("/api/chat", chatHandler)
 
 	log.Printf(
-		"Fiber server is running with AI provider %s at http://localhost:8080",
+		"Fiber server is running with AI provider %s and data mode %s at http://localhost:8080",
 		provider,
+		dataMode,
 	)
 
 	if err := app.Listen(":8080"); err != nil {

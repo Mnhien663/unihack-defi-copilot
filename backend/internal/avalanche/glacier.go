@@ -15,16 +15,33 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-const dataAPIBaseURL = "https://data-api.avax.network"
+const (
+	dataAPIBaseURL       = "https://data-api.avax.network"
+	dataAPITimeout       = 5 * time.Second
+	defaultMaxRetries    = 2
+	defaultRetryDelay    = 100 * time.Millisecond
+	maxConfiguredRetries = 5
+)
 
 // DataAPIClient calls Avalanche's indexed Data API.
 type DataAPIClient struct {
-	httpClient   *http.Client
-	apiKey       string
-	baseURL      string
+	httpClient *http.Client
+	baseURL    string
+	apiKey     string
+	maxRetries int
+	retryDelay time.Duration
+
 	mu           sync.Mutex
 	readAttempts uint64
 	readLimit    uint64
+}
+
+type DataAPIClientConfig struct {
+	HTTPClient *http.Client
+	BaseURL    string
+	APIKey     string
+	MaxRetries int
+	RetryDelay time.Duration
 }
 
 // DataAPINativeBalance keeps the balance in raw units.
@@ -41,15 +58,74 @@ type nativeBalanceResponse struct {
 }
 
 // NewDataAPIClient accepts an optional Data API key.
+// NewDataAPIClient creates a production Data API client.
 func NewDataAPIClient(apiKey string) *DataAPIClient {
-	return &DataAPIClient{
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+	client, err := NewDataAPIClientWithConfig(
+		DataAPIClientConfig{
+			APIKey:     apiKey,
+			MaxRetries: defaultMaxRetries,
+			RetryDelay: defaultRetryDelay,
 		},
-		apiKey:    strings.TrimSpace(apiKey),
-		baseURL:   dataAPIBaseURL,
-		readLimit: 100,
+	)
+	if err != nil {
+		panic(err)
 	}
+
+	return client
+}
+
+// NewDataAPIClientWithConfig allows tests to inject an HTTP server.
+func NewDataAPIClientWithConfig(
+	config DataAPIClientConfig,
+) (*DataAPIClient, error) {
+	baseURL := strings.TrimRight(
+		strings.TrimSpace(config.BaseURL),
+		"/",
+	)
+	if baseURL == "" {
+		baseURL = dataAPIBaseURL
+	}
+
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil ||
+		(parsedURL.Scheme != "http" &&
+			parsedURL.Scheme != "https") ||
+		parsedURL.Host == "" {
+		return nil, fmt.Errorf("invalid Data API base URL")
+	}
+
+	httpClient := config.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: dataAPITimeout,
+		}
+	}
+
+	if config.MaxRetries < 0 ||
+		config.MaxRetries > maxConfiguredRetries {
+		return nil, fmt.Errorf(
+			"Data API max retries must be between 0 and %d",
+			maxConfiguredRetries,
+		)
+	}
+
+	retryDelay := config.RetryDelay
+	if retryDelay < 0 {
+		return nil, fmt.Errorf(
+			"Data API retry delay cannot be negative",
+		)
+	}
+
+	return &DataAPIClient{
+		httpClient: httpClient,
+		baseURL:    baseURL,
+		apiKey: strings.TrimSpace(
+			config.APIKey,
+		),
+		maxRetries: config.MaxRetries,
+		retryDelay: retryDelay,
+		readLimit:  100,
+	}, nil
 }
 
 // GetNativeBalance reads the native balance on Fuji through the Data API.
@@ -75,19 +151,12 @@ func (c *DataAPIClient) GetNativeBalance(
 		address,
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resp, err := c.doGET(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("create Data API request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("x-glacier-api-key", c.apiKey)
-	}
-
-	resp, err := c.doRead(req)
-	if err != nil {
-		return nil, fmt.Errorf("request Data API native balance: %w", err)
+		return nil, fmt.Errorf(
+			"request Data API native balance: %w",
+			err,
+		)
 	}
 	defer resp.Body.Close()
 
@@ -132,6 +201,61 @@ func (c *DataAPIClient) GetNativeBalance(
 	}
 
 	return balance, nil
+}
+
+// ReadNativeBalance adapts the Data API response to the chain domain.
+func (c *DataAPIClient) ReadNativeBalance(
+	ctx context.Context,
+	walletAddress string,
+) (NativeBalanceResult, error) {
+	balance, err := c.GetNativeBalance(ctx, walletAddress)
+	if err != nil {
+		return NativeBalanceResult{}, err
+	}
+
+	raw, ok := new(big.Int).SetString(balance.Balance, 10)
+	if !ok || raw.Sign() < 0 || raw.BitLen() > 256 {
+		return NativeBalanceResult{}, fmt.Errorf(
+			"Data API native balance is outside uint256 bounds",
+		)
+	}
+
+	formatted, err := FormatTokenAmount(
+		raw.String(),
+		uint8(balance.Decimals),
+	)
+	if err != nil {
+		return NativeBalanceResult{}, fmt.Errorf(
+			"format native balance: %w",
+			err,
+		)
+	}
+
+	checksumAddress := common.HexToAddress(
+		strings.TrimSpace(walletAddress),
+	).Hex()
+
+	return NativeBalanceResult{
+		WalletAddress: checksumAddress,
+		Balance: TokenAmount{
+			Asset: Asset{
+				ChainID:  uint64(FujiChainID),
+				Symbol:   balance.Symbol,
+				Decimals: uint8(balance.Decimals),
+			},
+			Raw:       raw.String(),
+			Formatted: formatted,
+		},
+		Provenance: Provenance{
+			Source:      "Avalanche Data API",
+			SourceType:  "data_api",
+			ChainID:     uint64(FujiChainID),
+			BlockNumber: nil,
+			ObservedAt:  time.Now().UTC(),
+			Mode:        "live",
+			IsDemo:      false,
+		},
+	}, nil
 }
 
 type DataAPIAddress struct {
@@ -188,25 +312,18 @@ func (c *DataAPIClient) ListTransactions(
 
 	endpoint := fmt.Sprintf(
 		"%s/v1/chains/%d/addresses/%s/transactions?%s",
-		dataAPIBaseURL,
+		c.baseURL,
 		FujiChainID,
 		address,
 		query.Encode(),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	resp, err := c.doGET(ctx, endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("create Data API transactions request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("x-glacier-api-key", c.apiKey)
-	}
-
-	resp, err := c.doRead(req)
-	if err != nil {
-		return nil, fmt.Errorf("request Data API transactions: %w", err)
+		return nil, fmt.Errorf(
+			"request Data API transactions: %w",
+			err,
+		)
 	}
 	defer resp.Body.Close()
 
@@ -469,46 +586,6 @@ func (c *DataAPIClient) ReadTransactionHistory(
 	return result, nil
 }
 
-// ReadNativeBalance adapts the Data API response to the shared result type.
-func (c *DataAPIClient) ReadNativeBalance(
-	ctx context.Context,
-	walletAddress string,
-) (NativeBalanceResult, error) {
-	balance, err := c.GetNativeBalance(ctx, walletAddress)
-	if err != nil {
-		return NativeBalanceResult{}, err
-	}
-
-	raw, ok := new(big.Int).SetString(balance.Balance, 10)
-	if !ok || raw.Sign() < 0 || raw.BitLen() > 256 {
-		return NativeBalanceResult{}, fmt.Errorf(
-			"Data API native balance is outside uint256 bounds",
-		)
-	}
-
-	return NativeBalanceResult{
-		WalletAddress: common.HexToAddress(
-			strings.TrimSpace(walletAddress),
-		).Hex(),
-		Balance: TokenAmount{
-			Asset: Asset{
-				ChainID:  uint64(FujiChainID),
-				Symbol:   balance.Symbol,
-				Decimals: uint8(balance.Decimals),
-			},
-			Raw: raw.String(),
-		},
-		Provenance: Provenance{
-			Source:     "Avalanche Data API",
-			SourceType: "data_api",
-			ChainID:    uint64(FujiChainID),
-			ObservedAt: time.Now().UTC(),
-			Mode:       "live",
-			IsDemo:     false,
-		},
-	}, nil
-}
-
 // doRead retries a GET request once on HTTP 429.
 // Other statuses and transport errors are returned without retry.
 func (c *DataAPIClient) doRead(
@@ -582,3 +659,5 @@ func (c *DataAPIClient) ReadUsage() (attempts, limit uint64) {
 
 	return c.readAttempts, c.readLimit
 }
+
+var _ ChainReader = (*DataAPIClient)(nil)
