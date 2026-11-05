@@ -48,12 +48,18 @@ func main() {
 
 	var nativeClient tools.ChainClient
 	var tokenClient tools.TokenBalanceClient
+	var transactionClient tools.TransactionClient
+	var transactionSource string
+	var allowanceReader avalanche.AllowanceReader
 
 	switch dataMode {
 	case "mock":
 		mockClient := tools.NewMockChainClient()
 		nativeClient = mockClient
 		tokenClient = mockClient
+		transactionClient = mockClient
+		transactionSource = "mock_chain"
+		allowanceReader = mockClient
 
 	case "data_api":
 		dataAPIClient := avalanche.NewDataAPIClient(
@@ -61,6 +67,26 @@ func main() {
 		)
 		nativeClient = dataAPIClient
 		tokenClient = dataAPIClient
+		transactionClient = dataAPIClient
+		transactionSource = "Avalanche Data API"
+		rpcClient, err := avalanche.InitClient()
+		if err != nil {
+			log.Fatalf("Cannot initialize allowance RPC: %v", err)
+		}
+		defer rpcClient.Close()
+
+		rpcAllowanceReader, err := avalanche.NewRPCAllowanceReader(
+			rpcClient,
+			[]string{
+				// DDEMO on Avalanche Fuji.
+				"0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+			},
+		)
+		if err != nil {
+			log.Fatalf("Cannot create allowance reader: %v", err)
+		}
+
+		allowanceReader = rpcAllowanceReader
 
 	default:
 		log.Fatalf(
@@ -79,9 +105,24 @@ func main() {
 		log.Fatalf("Cannot create token balance tool: %v", err)
 	}
 
+	transactionTool, err := tools.NewListTransactionsTool(
+		transactionClient,
+		transactionSource,
+	)
+	if err != nil {
+		log.Fatalf("Cannot create transaction history tool: %v", err)
+	}
+
+	allowanceTool, err := tools.NewGetAllowanceTool(allowanceReader)
+	if err != nil {
+		log.Fatalf("Cannot create allowance tool: %v", err)
+	}
+
 	for _, tool := range []ai.Tool{
 		nativeBalanceTool,
 		tokenBalanceTool,
+		transactionTool,
+		allowanceTool,
 	} {
 		if err := registry.Register(tool); err != nil {
 			log.Fatalf(
@@ -96,6 +137,8 @@ func main() {
 		[]string{
 			tools.NativeBalanceToolName,
 			tools.ListTokenBalancesToolName,
+			tools.ListTransactionsToolName,
+			tools.GetAllowanceToolName,
 		},
 		nil,
 	)

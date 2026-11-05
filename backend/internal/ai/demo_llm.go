@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -12,6 +13,8 @@ import (
 const (
 	demoNativeBalanceToolName = "get_native_balance"
 	demoTokenBalancesToolName = "list_token_balances"
+	demoTransactionsToolName  = "list_transactions"
+	demoAllowanceToolName     = "get_allowance"
 )
 
 var (
@@ -58,15 +61,39 @@ func (d *DemoLLMClient) Complete(
 		)
 	}
 
-	arguments, err := json.Marshal(
-		struct {
-			WalletAddress string `json:"wallet_address"`
-			ChainID       uint64 `json:"chain_id"`
-		}{
-			WalletAddress: request.WalletAddress,
-			ChainID:       request.ChainID,
-		},
-	)
+	toolArguments := map[string]any{
+		"wallet_address": request.WalletAddress,
+		"chain_id":       request.ChainID,
+	}
+
+	if toolName == demoAllowanceToolName {
+		token := demoNamedAddress(lastMessage.Content, "token_address")
+		spender := demoNamedAddress(lastMessage.Content, "spender_address")
+
+		if token == "" || spender == "" {
+			content := "Please provide token_address and spender_address " +
+				"as complete 0x addresses. Allowance is spending permission, " +
+				"not your wallet balance."
+
+			if request.Locale == "vi" {
+				content = "Vui lòng cung cấp token_address và spender_address " +
+					"dạng địa chỉ 0x đầy đủ. Allowance là quyền chi tiêu, " +
+					"không phải số dư ví."
+			}
+
+			return LLMResponse{
+				Message: Message{
+					Role:    RoleAssistant,
+					Content: content,
+				},
+			}, nil
+		}
+
+		toolArguments["token_address"] = token
+		toolArguments["spender_address"] = spender
+	}
+
+	arguments, err := json.Marshal(toolArguments)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf(
 			"encode demo tool arguments: %w",
@@ -90,6 +117,25 @@ func (d *DemoLLMClient) Complete(
 
 func selectDemoTool(message string) string {
 	normalized := strings.ToLower(strings.TrimSpace(message))
+
+	if strings.Contains(normalized, "allowance") ||
+		strings.Contains(normalized, "quyền chi tiêu") ||
+		strings.Contains(normalized, "hạn mức chi tiêu") {
+		return demoAllowanceToolName
+	}
+
+	historyKeywords := []string{
+		"transaction",
+		"history",
+		"lịch sử",
+		"giao dịch",
+	}
+
+	for _, keyword := range historyKeywords {
+		if strings.Contains(normalized, keyword) {
+			return demoTransactionsToolName
+		}
+	}
 
 	tokenKeywords := []string{
 		"erc-20",
@@ -142,7 +188,9 @@ func (d *DemoLLMClient) finalResponse(
 		)
 	}
 
-	if result.Error != nil {
+	if result.Error != nil &&
+		!(toolMessage.Name == demoTransactionsToolName &&
+			result.Error.Code == "EMPTY_HISTORY") {
 		return LLMResponse{
 			Message: Message{
 				Role: RoleAssistant,
@@ -158,8 +206,14 @@ func (d *DemoLLMClient) finalResponse(
 	var err error
 
 	switch toolMessage.Name {
+	case demoTransactionsToolName:
+		content, err = demoTransactionResponse(locale, result)
+
 	case demoTokenBalancesToolName:
 		content, err = demoTokenBalanceResponse(locale, result)
+
+	case demoAllowanceToolName:
+		content, err = demoAllowanceResponse(locale, result)
 
 	default:
 		content, err = demoNativeBalanceResponse(locale, result)
@@ -307,12 +361,172 @@ func demoTokenBalanceResponse(
 	), nil
 }
 
+func demoTransactionResponse(
+	locale string,
+	result ToolResult,
+) (string, error) {
+	var data struct {
+		Transactions []struct {
+			NativeTransaction struct {
+				TxHash   string `json:"txHash"`
+				TxStatus string `json:"txStatus"`
+			} `json:"nativeTransaction"`
+		} `json:"transactions"`
+		NextPageToken string `json:"next_page_token"`
+	}
+
+	if err := json.Unmarshal(result.Data, &data); err != nil {
+		return "", fmt.Errorf(
+			"decode demo transaction history: %w",
+			err,
+		)
+	}
+
+	observedAt := formatObservedAt(result.ObservedAt)
+
+	if len(data.Transactions) == 0 {
+		if locale == "vi" {
+			return fmt.Sprintf(
+				"Trang này không có giao dịch trên Avalanche Fuji "+
+					"(chain ID %d). Nguồn: %s, quan sát lúc %s.",
+				result.ChainID,
+				result.Source,
+				observedAt,
+			), nil
+		}
+
+		return fmt.Sprintf(
+			"No transactions were returned for this page on Avalanche Fuji "+
+				"(chain ID %d). Source: %s, observed at %s.",
+			result.ChainID,
+			result.Source,
+			observedAt,
+		), nil
+	}
+
+	items := make([]string, 0, len(data.Transactions))
+	for _, item := range data.Transactions {
+		tx := item.NativeTransaction
+		status := tx.TxStatus
+		if status == "" {
+			status = "unknown"
+		}
+
+		// Preserve the upstream status rather than guessing its meaning.
+		items = append(items, fmt.Sprintf(
+			"%s (status: %s)",
+			tx.TxHash,
+			status,
+		))
+	}
+
+	if locale == "vi" {
+		more := ""
+		if data.NextPageToken != "" {
+			more = " Có trang tiếp theo."
+		}
+
+		return fmt.Sprintf(
+			"Trang lịch sử có %d giao dịch trên Avalanche Fuji "+
+				"(chain ID %d): %s.%s Nguồn: %s, quan sát lúc %s.",
+			len(items),
+			result.ChainID,
+			strings.Join(items, "; "),
+			more,
+			result.Source,
+			observedAt,
+		), nil
+	}
+
+	more := ""
+	if data.NextPageToken != "" {
+		more = " Another page is available."
+	}
+
+	return fmt.Sprintf(
+		"This history page contains %d transactions on Avalanche Fuji "+
+			"(chain ID %d): %s.%s Source: %s, observed at %s.",
+		len(items),
+		result.ChainID,
+		strings.Join(items, "; "),
+		more,
+		result.Source,
+		observedAt,
+	), nil
+}
+
 func formatObservedAt(observedAt time.Time) string {
 	if observedAt.IsZero() {
 		return "unknown"
 	}
 
 	return observedAt.UTC().Format(time.RFC3339)
+}
+
+func demoNamedAddress(message, field string) string {
+	pattern := `(?i)\b` + regexp.QuoteMeta(field) +
+		`\s*[:=]\s*(0x[0-9a-f]{40})\b`
+
+	match := regexp.MustCompile(pattern).FindStringSubmatch(message)
+	if len(match) != 2 {
+		return ""
+	}
+
+	return match[1]
+}
+
+func demoAllowanceResponse(
+	locale string,
+	result ToolResult,
+) (string, error) {
+	var data struct {
+		OwnerAddress   string `json:"owner_address"`
+		SpenderAddress string `json:"spender_address"`
+		Allowance      struct {
+			Asset struct {
+				Address string `json:"address"`
+			} `json:"asset"`
+			Formatted string `json:"formatted"`
+		} `json:"allowance"`
+	}
+
+	if err := json.Unmarshal(result.Data, &data); err != nil {
+		return "", fmt.Errorf("decode demo allowance: %w", err)
+	}
+
+	if data.Allowance.Formatted == "" {
+		return "", errors.New("demo allowance formatted amount is missing")
+	}
+
+	if locale == "vi" {
+		return fmt.Sprintf(
+			"Ví %s đã cấp quyền chi tiêu %s token của hợp đồng %s "+
+				"cho spender %s trên Avalanche Fuji (chain ID %d). "+
+				"Đây không phải số dư ví và không đảm bảo chuyển token thành công. "+
+				"Nguồn: %s, quan sát lúc %s.",
+			data.OwnerAddress,
+			data.Allowance.Formatted,
+			data.Allowance.Asset.Address,
+			data.SpenderAddress,
+			result.ChainID,
+			result.Source,
+			formatObservedAt(result.ObservedAt),
+		), nil
+	}
+
+	return fmt.Sprintf(
+		"Owner %s has granted spender %s an allowance of %s tokens "+
+			"for contract %s on Avalanche Fuji (chain ID %d). "+
+			"This is not the wallet balance and does not guarantee a transfer will succeed. "+
+			"Source: %s, observed at %s.",
+		data.OwnerAddress,
+		data.SpenderAddress,
+		data.Allowance.Formatted,
+		data.Allowance.Asset.Address,
+		result.ChainID,
+		result.Source,
+		formatObservedAt(result.ObservedAt),
+	), nil
 }
 
 var _ LLMClient = (*DemoLLMClient)(nil)
