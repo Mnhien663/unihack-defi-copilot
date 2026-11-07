@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 interface ISwapAdapter {
-    /// @notice Swaps input tokens already forwarded by the manager.
+    /// @notice Pulls approved input tokens from the manager and swaps them.
     /// @dev Implementation must restrict calls to the authorized manager.
     /// @return amountOut Actual output amount delivered to recipient.
     function swap(
