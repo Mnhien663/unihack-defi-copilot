@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"unihack-backend/internal/ai"
@@ -30,7 +32,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Cannot connect to PostgreSQL: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Println("PostgreSQL pool close failed")
+			return
+		}
+
+		log.Println("PostgreSQL pool closed")
+	}()
 
 	memoryStore, err := database.NewPostgresMemoryStore(db)
 	if err != nil {
@@ -238,7 +247,43 @@ func main() {
 		dataMode,
 	)
 
-	if err := app.Listen(":8080"); err != nil {
-		log.Printf("Server stopped: %v", err)
+	shutdownSignal := make(chan os.Signal, 1)
+
+	signal.Notify(
+		shutdownSignal,
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer signal.Stop(shutdownSignal)
+
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		serverErrors <- app.Listen(":8080")
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if err != nil {
+			log.Printf("Server stopped unexpectedly: %v", err)
+		}
+		return
+
+	case receivedSignal := <-shutdownSignal:
+		log.Printf(
+			"Received %s; shutting down HTTP server",
+			receivedSignal,
+		)
 	}
+
+	if err := app.ShutdownWithTimeout(40 * time.Second); err != nil {
+		log.Printf("HTTP shutdown did not complete cleanly: %v", err)
+		return
+	}
+
+	if err := <-serverErrors; err != nil {
+		log.Printf("HTTP listener stopped with error: %v", err)
+	}
+
+	log.Println("HTTP server shutdown completed")
 }
