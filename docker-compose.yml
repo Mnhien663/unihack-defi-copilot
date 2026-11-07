@@ -29,6 +29,7 @@ services:
      - DB_USER=admin
      - DB_PASSWORD=${DB_PASSWORD}
      - DB_NAME=deficopilot_db
+     - DB_SSLMODE=${DB_SSLMODE:-disable}
     # Ket noi AI
      - AI_PROVIDER=${AI_PROVIDER:-mock}
      - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -36,6 +37,8 @@ services:
      - GEMINI_API_KEY=${GEMINI_API_KEY}
      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-flash-preview}
     # Ket noi Avalanche
+     - DATA_MODE=${DATA_MODE:-mock}
+     - AVALANCHE_DATA_API_KEY=${AVALANCHE_DATA_API_KEY}
      - AVALANCHE_RPC_URL=${AVALANCHE_RPC_URL}
      - SNOWTRACE_API_KEY=${SNOWTRACE_API_KEY}
      - AGENT_PRIVATE_KEY=${AGENT_PRIVATE_KEY}

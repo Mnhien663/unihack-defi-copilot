@@ -40,8 +40,9 @@ type Asset struct {
 // TokenAmount stores an integer amount in the token's smallest units.
 // Raw must be a non-negative base-10 integer string.
 type TokenAmount struct {
-	Asset Asset  `json:"asset"`
-	Raw   string `json:"raw"`
+	Asset     Asset  `json:"asset"`
+	Raw       string `json:"raw"`
+	Formatted string `json:"formatted"`
 }
 
 // Provenance records where and when data was obtained.
@@ -62,6 +63,22 @@ type NativeBalanceResult struct {
 	WalletAddress string      `json:"wallet_address"`
 	Balance       TokenAmount `json:"balance"`
 	Provenance    Provenance  `json:"provenance"`
+}
+
+// TokenBalance describes one fungible token held by a wallet.
+type TokenBalance struct {
+	Name            string      `json:"name"`
+	Amount          TokenAmount `json:"amount"`
+	LogoURI         string      `json:"logo_uri,omitempty"`
+	TokenReputation string      `json:"token_reputation,omitempty"`
+}
+
+// TokenBalancePage is one bounded page of ERC-20 balances.
+type TokenBalancePage struct {
+	WalletAddress string         `json:"wallet_address"`
+	Balances      []TokenBalance `json:"balances"`
+	NextPageToken string         `json:"next_page_token,omitempty"`
+	Provenance    Provenance     `json:"provenance"`
 }
 
 // SwapQuoteRequest asks for an exact-input quote.
@@ -148,6 +165,16 @@ type ChainReader interface {
 		ctx context.Context,
 		walletAddress string,
 	) (NativeBalanceResult, error)
+}
+
+// TokenBalanceReader provides paginated ERC-20 balances.
+type TokenBalanceReader interface {
+	ListTokenBalances(
+		ctx context.Context,
+		walletAddress string,
+		pageSize int,
+		pageToken string,
+	) (TokenBalancePage, error)
 }
 
 // SwapQuoter provides read-only exact-input quotes.

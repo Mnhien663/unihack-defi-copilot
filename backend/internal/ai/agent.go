@@ -47,12 +47,15 @@ type ToolExecution struct {
 }
 
 type PendingAction struct {
+	PendingActionID      string          `json:"pending_action_id,omitempty"`
 	RequestID            string          `json:"request_id"`
 	ToolCallID           string          `json:"tool_call_id"`
 	ToolName             string          `json:"tool_name"`
 	Arguments            json.RawMessage `json:"arguments"`
 	ChainID              uint64          `json:"chain_id"`
 	WalletAddress        string          `json:"wallet_address"`
+	NormalizedIntentHash string          `json:"normalized_intent_hash,omitempty"`
+	ExpiresAt            string          `json:"expires_at,omitempty"`
 	RequiresConfirmation bool            `json:"requires_confirmation"`
 }
 
@@ -110,6 +113,21 @@ func NewAgent(
 	}, nil
 }
 
+func (a *Agent) persistTurn(
+	ctx context.Context,
+	record TurnRecord,
+) error {
+	if recorder, ok := a.memory.(TurnRecorder); ok {
+		return recorder.RecordTurn(ctx, record)
+	}
+
+	return a.memory.Append(
+		ctx,
+		record.SessionID,
+		record.Message,
+	)
+}
+
 func (a *Agent) Run(
 	ctx context.Context,
 	input AgentInput,
@@ -134,6 +152,24 @@ func (a *Agent) Run(
 		}, nil
 	}
 
+	if sessionInitializer, ok := a.memory.(SessionInitializer); ok {
+		err := sessionInitializer.EnsureSession(
+			ctx,
+			SessionMetadata{
+				SessionID:     input.SessionID,
+				WalletAddress: input.WalletAddress,
+				ChainID:       input.ChainID,
+				Locale:        input.Locale,
+			},
+		)
+		if err != nil {
+			return AgentOutput{}, fmt.Errorf(
+				"ensure conversation session: %w",
+				err,
+			)
+		}
+	}
+
 	history, err := a.memory.Load(ctx, input.SessionID)
 	if err != nil {
 		return AgentOutput{}, fmt.Errorf(
@@ -143,8 +179,9 @@ func (a *Agent) Run(
 	}
 
 	userMessage := Message{
-		Role:    RoleUser,
-		Content: input.Message,
+		RequestID: input.RequestID,
+		Role:      RoleUser,
+		Content:   input.Message,
 	}
 
 	if err := a.memory.Append(
@@ -199,14 +236,18 @@ func (a *Agent) Run(
 			}
 
 			assistantMessage := Message{
-				Role:    RoleAssistant,
-				Content: finalContent,
+				RequestID: input.RequestID,
+				Role:      RoleAssistant,
+				Content:   finalContent,
 			}
 
-			if err := a.memory.Append(
+			if err := a.persistTurn(
 				ctx,
-				input.SessionID,
-				assistantMessage,
+				TurnRecord{
+					SessionID:      input.SessionID,
+					Message:        assistantMessage,
+					ToolExecutions: executions,
+				},
 			); err != nil {
 				return AgentOutput{}, fmt.Errorf(
 					"append assistant message: %w",
@@ -321,19 +362,42 @@ func (a *Agent) Run(
 
 		if writeCallCount == 1 {
 			call := response.ToolCalls[0]
+			pendingMessage := pendingActionMessage(input.Locale)
+
+			pendingAction := &PendingAction{
+				RequestID:            input.RequestID,
+				ToolCallID:           call.ID,
+				ToolName:             call.Name,
+				Arguments:            call.Arguments,
+				ChainID:              input.ChainID,
+				WalletAddress:        input.WalletAddress,
+				RequiresConfirmation: true,
+			}
+
+			assistantMessage := Message{
+				RequestID: input.RequestID,
+				Role:      RoleAssistant,
+				Content:   pendingMessage,
+			}
+
+			if err := a.persistTurn(
+				ctx,
+				TurnRecord{
+					SessionID:     input.SessionID,
+					Message:       assistantMessage,
+					PendingAction: pendingAction,
+				},
+			); err != nil {
+				return AgentOutput{}, fmt.Errorf(
+					"persist pending action turn: %w",
+					err,
+				)
+			}
 
 			return AgentOutput{
-				Message:        pendingActionMessage(input.Locale),
-				ToolExecutions: []ToolExecution{},
-				PendingAction: &PendingAction{
-					RequestID:            input.RequestID,
-					ToolCallID:           call.ID,
-					ToolName:             call.Name,
-					Arguments:            call.Arguments,
-					ChainID:              input.ChainID,
-					WalletAddress:        input.WalletAddress,
-					RequiresConfirmation: true,
-				},
+				Message:              pendingMessage,
+				ToolExecutions:       []ToolExecution{},
+				PendingAction:        pendingAction,
 				RequiresConfirmation: true,
 			}, nil
 		}
