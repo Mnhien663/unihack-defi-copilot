@@ -736,3 +736,159 @@ Quoter route selection was not re-executed in this verification.
 No demo AMM was deployed.
 Wallet swap execution and AllowanceManager integration remain unverified.
 The reader does not approve, sign or broadcast transactions.
+
+## Aave position/oracle handoff — roadmap 2026-11-05
+
+### Implementation
+
+- Reader and DTOs: backend/internal/avalanche/position.go.
+- Tests: backend/internal/avalanche/position_test.go.
+- Constructor:
+  NewAavePositionReader(client PositionRPCClient, config AavePositionConfig).
+- Method:
+  ReadPosition(ctx, walletAddress) (AavePositionResult, error).
+- PositionRPCClient embeds RPCReader and adds HeaderByNumber.
+- The caller owns the RPC client and must close it.
+- The whole read has a ten-second timeout.
+- Reader is not wired into main.go or an AI-facing tool yet.
+
+This specialized result supplements LendingPositionResult.
+It contains account aggregates, one configured reserve and oracle data.
+It does not implement the existing LendingPositionReader interface.
+
+### Supported scope
+
+- Aave V3 Fuji, chain ID 43113.
+- The configured USDC reserve only.
+- Account aggregates cover all reserves used by the wallet.
+- Reserve details and oracle price cover only the configured USDC.
+- These scopes must not be presented as equivalent.
+- Other reserve enumeration, eMode and isolation-mode modelling
+  are not implemented.
+- No borrowing or liquidation transaction is submitted.
+
+### Source validation
+
+The reader:
+- Validates a nonzero wallet address and Fuji RPC chain ID.
+- Selects a block and reads its timestamp.
+- Resolves Pool and oracle through Addresses Provider.
+- Rejects a Pool different from the configured Pool.
+- Checks the Data Provider belongs to the configured market.
+- Pins contract reads to the selected block.
+- Rechecks the block header after reading and rejects an observed
+  block change. This does not guarantee finality.
+- Returns errors rather than partial position results.
+
+### Units
+
+| Field | Unit |
+|---|---|
+| Account collateral/debt/available borrow | Oracle base-currency raw units |
+| Oracle base_currency_unit_raw | Raw units per one base-currency unit |
+| Reserve supplied/stable debt/variable debt | Underlying USDC raw units |
+| USDC decimals | 6 |
+| LTV and liquidation thresholds | Basis points; 10000 = 100% |
+| Account health_factor_raw | Scale 10^18 |
+| Oracle price_raw | Base-currency units per whole underlying token |
+| Oracle updated_at and block_timestamp | Unix seconds |
+| Oracle age_seconds | Block timestamp minus source updatedAt |
+
+Base currency is currently USD, represented by the zero address.
+The verified base currency unit is 100000000.
+The reader checks source decimals against the oracle unit.
+
+Keep integer amounts as strings. Do not use float64 for risk math.
+Reserve thresholds are not account-weighted thresholds.
+
+### Empty positions and collateral
+
+- Zero supplied balance, collateral or debt is valid data.
+- Account.HasDebt is based on aggregate total debt.
+- When there is no debt, Aave may return uint256 maximum as health factor.
+- Preserve that raw sentinel but display a no-debt state rather than
+  a normal numeric health factor.
+- UserCollateralEnabled is distinct from ReserveCollateralEnabled.
+- A supplied asset is not automatically active collateral.
+- Frozen or inactive reserve flags are returned without discarding
+  existing balances or debt.
+
+### Oracle validation and freshness
+
+The reader requires a direct price source supporting decimals()
+and latestRoundData().
+
+It rejects:
+- Missing direct source or nonpositive oracle price.
+- Nonpositive source answer or answer different from oracle price.
+- Source scale different from oracle base-currency unit.
+- Invalid round identifiers.
+- Missing, inconsistent or future source timestamps.
+
+Unsupported source metadata returns an error.
+There is no application fallback to a guessed or fixed price.
+
+AavePositionConfig.MaxOracleAgeSeconds:
+- 0: no age policy configured; freshness_status is unknown.
+- Positive: age is checked against this application policy.
+- Age equal to the limit is accepted.
+- Age above the limit returns ErrOraclePriceStale.
+- An accepted age returns freshness_status=fresh under that policy only.
+
+The policy is not a verified feed heartbeat.
+No default maximum age has been established for this deployment.
+Do not label unknown freshness as verified.
+Do not replace source updatedAt with RPC observation time.
+
+### Errors
+
+Use errors.Is where applicable:
+
+| Error | Meaning |
+|---|---|
+| ErrInvalidAddress | Invalid or zero wallet |
+| ErrWrongChain | RPC endpoint is not Fuji |
+| ErrPositionSourceMismatch | Market, Pool or configured asset metadata mismatch |
+| ErrOraclePriceUnavailable | Invalid price, source scale, round or timestamps |
+| ErrOraclePriceStale | Source age exceeds the configured application limit |
+| context.Canceled | Read canceled |
+| context.DeadlineExceeded | Read timed out |
+
+Other RPC, ABI and source metadata errors remain Go errors.
+Do not convert errors into successful zero debt or zero collateral.
+Do not calculate liquidation values from an errored or partial result.
+
+### Verified sample
+
+- Fixture:
+  backend/internal/avalanche/testdata/position_fuji_oracle.json.
+- Script: contracts/scripts/check-aave-position.mjs.
+- Manifest: contracts/deployments/fuji.json, protocols.AaveV3.
+- Observation: 2026-11-08T09:23:31.121Z.
+- Block: 60724294.
+- Wallet aggregate collateral and debt: zero.
+- USDC supplied, stable debt and variable debt: zero.
+- Reserve LTV: 8250 bps; liquidation threshold: 8600 bps.
+- USDC oracle price: 99975000 with base unit 100000000.
+- Source updatedAt: 1794096753.
+- Source age at block: 33039 seconds.
+- Feed heartbeat and acceptable freshness remain unverified.
+
+The Node script exercised live reads.
+Go reader verification currently uses mocks.
+A borrowed live position has not been verified.
+Samples are historical, not current wallet state.
+
+### Dev 1 integration
+
+Dev 1 owns the AI tool, registration and deterministic risk calculations.
+Use the specialized reader without changing the chat response schema
+implicitly.
+
+Account aggregates can support account-level reporting.
+One USDC reserve observation is insufficient to reconstruct a complete
+multi-asset account or a general liquidation price.
+
+Keep freshness limitations visible.
+A liquidation threshold calculation is conditional on its model and
+inputs; it is not a forecast of market prices.

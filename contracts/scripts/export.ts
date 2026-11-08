@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 const contractNames = [
   "DemoToken",
   "AllowanceManager",
+  "DemoVault",
 ];
 
 const outputDirectory = new URL("../abi/", import.meta.url);

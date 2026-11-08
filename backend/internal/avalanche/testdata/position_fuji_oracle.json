@@ -1,0 +1,53 @@
+{
+  "chain_id": 43113,
+  "block_number": 60724294,
+  "observed_at": "2026-11-08T09:23:31.121Z",
+  "addresses_provider": "0x07D04EfAAA0Ac69D19d107795aF247C42Eb50F1C",
+  "pool": "0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40",
+  "oracle": "0xd36338d0F231446b36008310f1DE0812784ADeBC",
+  "asset": "0x5425890298aed601595a70AB815c96711a31Bc65",
+  "base_currency": "0x0000000000000000000000000000000000000000",
+  "base_currency_unit_raw": "100000000",
+  "asset_price_raw": "99975000",
+  "asset_price_source": "0x97FE42a7E96640D932bbc0e1580c73E705A8EB73",
+  "block_timestamp": 1794129792,
+  "source_observation": {
+    "address": "0x97FE42a7E96640D932bbc0e1580c73E705A8EB73",
+    "round_data_available": true,
+    "decimals": 8,
+    "round_id": "18446744073709552577",
+    "answer_raw": "99975000",
+    "started_at": "1794096753",
+    "updated_at": "1794096753",
+    "answered_in_round": "18446744073709552577",
+    "age_seconds": "33039",
+    "freshness_verified": false
+  },
+  "oracle_updated_at": "1794096753",
+  "oracle_freshness_verified": false,
+  "account": {
+    "wallet_address": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+    "total_collateral_base_raw": "0",
+    "total_debt_base_raw": "0",
+    "available_borrows_base_raw": "0",
+    "current_liquidation_threshold_bps": "0",
+    "ltv_bps": "0",
+    "health_factor_raw": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    "health_factor_scale_raw": "1000000000000000000"
+  },
+  "data_provider": "0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014",
+  "reserve": {
+    "asset": "0x5425890298aed601595a70AB815c96711a31Bc65",
+    "decimals": "6",
+    "reserve_ltv_bps": "8250",
+    "reserve_liquidation_threshold_bps": "8600",
+    "reserve_collateral_enabled": true,
+    "borrowing_enabled": true,
+    "is_active": true,
+    "is_frozen": false,
+    "supplied_raw": "0",
+    "stable_debt_raw": "0",
+    "variable_debt_raw": "0",
+    "user_collateral_enabled": false
+  }
+}

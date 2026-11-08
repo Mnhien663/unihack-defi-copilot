@@ -49,6 +49,34 @@
         "swapExecutionVerified": false,
         "fixture": "backend/internal/avalanche/testdata/quote_fuji_router.json"
       }
+    },
+    "AaveV3": {
+  "addressesProvider": "0x07D04EfAAA0Ac69D19d107795aF247C42Eb50F1C",
+  "pool": "0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40",
+  "dataProvider": "0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014",
+  "oracle": "0xd36338d0F231446b36008310f1DE0812784ADeBC",
+  "baseCurrency": "0x0000000000000000000000000000000000000000",
+  "baseCurrencyUnitRaw": "100000000",
+  "assets": [
+    {
+      "address": "0x5425890298aed601595a70AB815c96711a31Bc65",
+      "symbol": "USDC",
+      "decimals": 6,
+      "priceSource": "0x97FE42a7E96640D932bbc0e1580c73E705A8EB73",
+      "sourceDecimals": 8
     }
+  ],
+  "verification": {
+    "blockNumber": 60724294,
+    "observedAt": "2026-11-08T09:23:31.121Z",
+    "accountReadVerified": true,
+    "reserveReadVerified": true,
+    "oracleReadVerified": true,
+    "oracleHeartbeatVerified": false,
+    "borrowedPositionVerified": false,
+    "liquidationModelVerified": false,
+    "fixture": "backend/internal/avalanche/testdata/position_fuji_oracle.json"
+  }
+}
   }
 }

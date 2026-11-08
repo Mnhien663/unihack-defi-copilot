@@ -136,3 +136,106 @@ selection was not re-executed during this verification.
 No demo AMM fallback is currently needed for this quote path.
 Wallet swap execution and AllowanceManager integration remain
 unverified. No transaction was signed or broadcast.
+
+## Aave position and oracle reads — roadmap 2026-11-05
+
+### Verified source
+
+- Network: Avalanche Fuji, chain ID 43113.
+- Block: 60724294.
+- Observed at: 2026-11-08T09:23:31.121Z.
+- Wallet: 0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5.
+- Addresses Provider: 0x07D04EfAAA0Ac69D19d107795aF247C42Eb50F1C.
+- Pool: 0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40.
+- Data Provider: 0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014.
+- Oracle: 0xd36338d0F231446b36008310f1DE0812784ADeBC.
+- USDC: 0x5425890298aed601595a70AB815c96711a31Bc65.
+- Price source: 0x97FE42a7E96640D932bbc0e1580c73E705A8EB73.
+
+Pool and oracle were resolved through the Addresses Provider.
+The Data Provider's ADDRESSES_PROVIDER matched the selected market.
+All state reads used the same block.
+
+### Read methods
+
+- Addresses Provider: getPool(), getPriceOracle().
+- Pool: getUserAccountData(address).
+- Data Provider: ADDRESSES_PROVIDER(),
+  getReserveConfigurationData(address),
+  getUserReserveData(address,address).
+- Oracle: BASE_CURRENCY(), BASE_CURRENCY_UNIT(),
+  getAssetPrice(address), getSourceOfAsset(address).
+- Price source: decimals(), latestRoundData().
+
+Minimal read ABIs are in:
+contracts/scripts/check-aave-position.mjs.
+
+### Units and observations
+
+- USDC token decimals: 6.
+- Oracle base currency address: zero address, representing USD.
+- Base currency unit: 100000000.
+- USDC price: 99975000 raw, equivalent to 0.99975 USD.
+- Source decimals: 8; source answer matched oracle price.
+- Reserve LTV: 8250 bps.
+- Reserve liquidation threshold: 8600 bps.
+- Reserve active, not frozen; collateral and borrowing enabled.
+- Wallet supplied USDC, stable debt and variable debt were all zero.
+- Wallet USDC collateral flag was false.
+- Aggregate account collateral and debt were both zero.
+- Account health factor returned uint256 maximum for no debt.
+
+Account collateral/debt use oracle base-currency units.
+Per-reserve balances use underlying token units.
+Account liquidation threshold is distinct from reserve threshold.
+Do not display the no-debt health-factor sentinel as a normal value.
+
+### Oracle freshness
+
+- Block timestamp: 1794129792.
+- Source updatedAt: 1794096753.
+- Source age at the selected block: 33039 seconds.
+- answeredInRound equalled roundId.
+- Feed heartbeat and acceptable age remain unverified.
+- A positive price and valid round identifiers do not establish freshness.
+- RPC observation time must not replace source updatedAt.
+- Do not present freshness as verified or use these observations
+  to claim a validated liquidation-price calculation.
+
+### Evidence and scope
+
+- Fixture:
+  backend/internal/avalanche/testdata/position_fuji_oracle.json.
+- Reproduction: contracts/scripts/check-aave-position.mjs.
+- Reads require no private key and submit no transactions.
+- The sample verifies an empty position, not a borrowed position.
+- No demo position contract is currently required solely because
+  the tested wallet has zero collateral or debt.
+- Multi-asset liquidation modelling, eMode and isolation-mode
+  handling have not been validated.
+
+## Vault preparation — roadmap 2026-11-05
+
+- Contract: contracts/contracts/DemoVault.sol.
+- Base implementation: OpenZeppelin ERC4626.
+- ABI: contracts/abi/DemoVault.json.
+- Intended underlying: the team's DemoToken on Fuji.
+- Status: compiled; ABI exported; not deployed.
+- Existing contract suite: 92 passing.
+- Dedicated DemoVault behavior tests remain pending.
+
+The vault holds its underlying token directly.
+No yield strategy, yield history or APY calculation is implemented.
+APY must remain unknown.
+
+Read methods prepared for the next integration:
+asset(), decimals(), totalAssets(), totalSupply(), balanceOf(address),
+convertToAssets(uint256), maxWithdraw(address) and maxRedeem(address).
+
+Shares and underlying assets must retain their respective decimals.
+convertToAssets is a conversion estimate, not a withdrawal limit.
+Read maxWithdraw/maxRedeem separately when reporting availability.
+
+No vault address is recorded because deployment has not occurred.
+The vault is not yet connected to a Go reader, AI tool or
+AllowanceManager adapter.
