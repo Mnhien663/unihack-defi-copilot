@@ -22,13 +22,15 @@ Definitions: `backend/internal/avalanche/types.go`.
 
 | Interface | Method | Implementation status |
 |---|---|---|
-| ChainReader | ReadNativeBalance | DTO/interface defined; adapter pending |
+| ChainReader | ReadNativeBalance | Implemented by DataAPIClient; wired to get_native_balance |
+| TokenBalanceReader | ListTokenBalances | Implemented by DataAPIClient; wired to list_token_balances; live ERC-20 request returned HTTP 500 during verification |
 | SwapQuoter | QuoteExactInput | DTO/interface defined; adapter pending |
 | LendingPositionReader | ReadLendingPosition | DTO/interface defined; adapter pending |
 | VaultPositionReader | ReadVaultPosition | DTO/interface defined; protocol and adapter pending |
 
-Existing RPC/Data API readers remain available. They do not yet
-implement these interfaces.
+DataAPIClient implements ChainReader and TokenBalanceReader.
+Low-level RPC balance and metadata functions remain available.
+They are not an automatic fallback for the AI-facing token-list tool.
 
 Dev 1 owns the AI-facing ChainClient/tool interfaces and response
 envelope. Dev 2 owns chain adapters. Connect them through an adapter;
@@ -57,8 +59,8 @@ These are different assets. No conversion between them is implemented.
 
 ## Native balance response example
 
-Illustrative JSON shape; the timestamp below is a placeholder.
-The balance value was observed during the Data API spike.
+Domain DTO based on the Data API observation displayed at
+2026-11-08T04:32:31Z. This is historical evidence, not current balance.
 
 ```json
 {
@@ -69,16 +71,23 @@ The balance value was observed during the Data API spike.
       "symbol": "AVAX",
       "decimals": 18
     },
-    "raw": "99999999903593280"
+    "raw": "99999999831919520",
+    "formatted": "0.09999999983191952"
   },
   "provenance": {
-    "source": "avalanche_data_api",
+    "source": "Avalanche Data API",
+    "source_type": "data_api",
     "chain_id": 43113,
-    "observed_at": "2026-10-27T00:00:00Z",
+    "observed_at": "2026-11-08T04:32:31Z",
+    "mode": "live",
     "is_demo": false
   }
 }
 ```
+
+The saved upstream response contains nativeTokenBalance, not this DTO.
+The timestamp was recorded after displaying the response.
+No block number was supplied for this balance.
 
 ## Exact-input quote request example
 
@@ -315,4 +324,74 @@ AVALANCHE_LIVE_TEST=1 go test ./internal/avalanche/... -run '^TestFujiLiveSnapsh
 
 A new run selects a new block and may produce different balances.
 The live snapshot test is skipped unless explicitly enabled.
-The existing TestInitClient test still requires live Fuji RPC access.
+TestInitClient uses a local JSON-RPC test server.
+The separate live snapshot test requires explicit opt-in.
+
+## Balance tools handoff — roadmap 2026-11-02
+
+Verification was performed on 2026-11-08.
+
+### Adapter boundaries
+
+- ChainReader.ReadNativeBalance(ctx, walletAddress) returns
+  NativeBalanceResult.
+- TokenBalanceReader.ListTokenBalances(ctx, walletAddress, pageSize,
+  pageToken) returns TokenBalancePage.
+- DataAPIClient implements both interfaces.
+- Dev 1 owns tool schemas, response envelopes and AI wording.
+- Dev 2 owns adapter data validation, units and provenance.
+- Existing tool wiring is in read_tools.go and token_balance_tool.go.
+
+### Amount and metadata rules
+
+- raw is a base-10 integer string within uint256 bounds.
+- formatted is computed without float64.
+- Token identity is chain ID plus contract address.
+- Missing/null decimals is an error; zero decimals is valid.
+- Unknown token reputation does not itself invalidate a balance.
+- Unknown reputation must not be presented as a safety endorsement.
+- Do not convert upstream errors into successful zero balances.
+
+### Token-list scope
+
+- ListTokenBalances returns one page, not complete wallet holdings.
+- Page size is 1–500; the tool defaults to 100.
+- The request enables filterSpamTokens=true.
+- NextPageToken indicates that another page is available.
+- Missing a token from one page does not establish its balance.
+- Successful empty pages are distinct from HTTP or decoding errors.
+- No automatic RPC token-discovery fallback is implemented.
+- Direct RPC balanceOf reads require known token addresses.
+
+### Provenance rules
+
+- Live Data API results use source="Avalanche Data API",
+  source_type="data_api", mode="live" and is_demo=false.
+- observed_at is observation time, not block time.
+- Omit block_number when unavailable.
+- Saved observations are historical; do not relabel them as fresh reads.
+
+### Live evidence
+
+- Wallet: 0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5.
+- Native RPC and Data API raw balances matched:
+  99999999831919520 wei.
+- Reads occurred at different times; same-block equality was not verified.
+- DemoToken RPC balance was 0 and decimals was 18.
+- DemoToken: 0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A.
+- The ERC-20 Data API endpoint returned HTTP 500 twice.
+- The failure cause remains undetermined.
+- Live ERC-20 cross-source verification remains incomplete.
+- Evidence index:
+  backend/internal/avalanche/testdata/balances_verification.json.
+
+### Local verification
+
+- RPC ABI decoding, zero/max balances and invalid response lengths.
+- Metadata validation and context error propagation.
+- Data API zero balance, unknown reputation and missing/null decimals.
+- Exact large integers and uint256 overflow rejection.
+- Wrong chain, invalid addresses and invalid raw values.
+- Empty/missing lists, oversized pages and malformed JSON.
+- HTTP 429/500 and context cancellation/deadline handling.
+- These unit tests use local servers or mocks, not live APIs.

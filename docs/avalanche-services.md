@@ -125,9 +125,12 @@ https://build.avax.network/docs/api-reference/data-api/rate-limits
 - Base URL is stored on the client and defaults to
   `https://data-api.avax.network`.
 - `.env.example` declares `AVALANCHE_DATA_API_KEY` without a secret value.
-- HTTP client timeout: 10 seconds.
+- Default HTTP client timeout: 5 seconds per HTTP attempt.
+- A caller-supplied HTTP client can override this timeout.
+- Retries can extend total duration; callers should supply a deadline.
 - Requests use context and check HTTP response status.
-- Response bodies are limited to 1 MiB.
+- Native/history and legacy ERC-20 response bodies are limited to 1 MiB.
+- The AI-facing ListTokenBalances response body is limited to 2 MiB.
 - Local Data API tests passed for valid responses, authentication,
   pagination, input/response validation, provenance, HTTP errors,
   malformed JSON, bounded retry, and cancellation.
@@ -166,8 +169,10 @@ Command, run from `backend/`:
 
 - ReadTransactionHistory reads at most two pages and returns
   at most 100 transactions per call, requesting up to 50 per page.
-- Each page allows at most two application-level HTTP attempts,
-  so one history call allows at most four HTTP attempts.
+- ListTransactions uses doGET with configured retries.
+- The default is two retries: at most three HTTP attempts per page.
+- A two-page history read therefore permits at most six attempts
+  with the default configuration, subject to context and local budget.
 - Stops early when no continuation cursor remains.
 - Returns Truncated=true and NextPageToken when more pages remain.
 - Rejects repeated cursors.
@@ -206,19 +211,39 @@ Command, run from `backend/`:
 
 ## Bounded read retry
 
-- Native balance, ERC-20 balances, and transaction history use
-  a shared GET-only request helper.
-- Retries HTTP 429 once: at most two attempts per page.
-- Without Retry-After, waits 250 ms before retrying.
-- Retry-After: 0 allows an immediate retry.
-- Other non-empty Retry-After values return HTTP 429 without retry.
-- HTTP 401, other statuses, transport errors, and JSON decoding
-  errors are not retried by this helper.
-- Cancellation during the retry wait prevents a second attempt.
-- POST requests are rejected before sending.
-- Local tests passed for retry success, exhausted attempts,
-  HTTP 401, Retry-After handling, POST rejection, and cancellation.
-- This helper does not implement transaction submission.
+Two HTTP helpers currently exist.
+
+### doGET in data_api_http.go
+
+Used by GetNativeBalance, ListTransactions and ListTokenBalances.
+
+- GET requests only.
+- Default MaxRetries=2: at most three HTTP attempts per operation/page.
+- Retries HTTP 429, 500, 502 and 503.
+- Transport errors are also retried within the configured bound.
+- Retry delay uses configured exponential backoff.
+- This helper does not currently interpret Retry-After.
+- Response decoding failures are not retried.
+- Each HTTP attempt consumes the client instance's local request budget.
+- Caller cancellation/deadline bounds the operation.
+
+### doRead in glacier.go
+
+Used by the separate legacy ListERC20Balances method.
+
+- At most two attempts.
+- Retries HTTP 429 once.
+- Without Retry-After, waits 250 ms.
+- Retry-After: 0 permits an immediate retry.
+- Other non-empty Retry-After values return the response without retry.
+- Other HTTP statuses and transport errors are not retried.
+
+### Scope
+
+- These helpers do not submit transactions.
+- The two helpers currently have different policies.
+- Do not describe all Data API methods as having one shared retry policy.
+- Limits count HTTP attempts, not account CU consumption.
 
 ## Saved Data API response fixtures
 
@@ -283,3 +308,98 @@ Command, run from `backend/`:
 - This failed attempt does not establish unsupported Fuji indexing.
 - No retry or RPC fallback was performed.
 - Current live availability remains unconfirmed.
+
+## Balance verification — 2026-11-08
+
+### Native AVAX
+
+Wallet:
+0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5
+
+| Source | Observation time, UTC | Raw balance |
+|---|---|---|
+| Fuji RPC | 2026-11-08T04:28:35Z | 99999999831919520 |
+| Data API | 2026-11-08T04:32:31Z | 99999999831919520 |
+
+- Decimals: 18.
+- Formatted amount: 0.09999999983191952 AVAX.
+- Raw balances matched.
+- The reads were taken at different times.
+- Same-block equality was not verified.
+- Observation timestamps were recorded after displaying the responses.
+
+### DemoToken RPC
+
+- Token: 0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A.
+- Observation time: 2026-11-08T04:35:00Z.
+- balanceOf returned a valid 32-byte ABI word representing zero.
+- decimals returned 18.
+- Calls used latest; no fixed result block was recorded.
+
+### ERC-20 Data API failure
+
+Request:
+GET /v1/chains/43113/addresses/{wallet}/balances:listErc20
+
+Parameters:
+- pageSize=10
+- filterSpamTokens=true
+
+Results:
+- HTTP 500 at 2026-11-08T04:38:55Z.
+- HTTP 500 on one manual retry at 2026-11-08T04:40:05Z.
+- Both bodies reported Internal server error.
+- Failure cause remains undetermined.
+- No further live retry was performed in this verification.
+- This is not a successful empty-token response.
+- Live ERC-20 RPC/Data API comparison remains incomplete.
+- This does not establish that Fuji ERC-20 indexing is unsupported.
+- No automatic RPC fallback was exercised.
+
+### AI-facing token adapter
+
+ListTokenBalances is separate from legacy ListERC20Balances.
+
+- Accepts page sizes 1–500.
+- Enables spam filtering.
+- Returns one page and an optional continuation cursor.
+- Rejects a response containing more entries than requested.
+- Rejects missing/null decimals instead of assuming zero.
+- Accepts an explicit decimals value of zero.
+- Validates decimal-digit raw amounts within uint256 bounds.
+- Uses exact formatting without float64.
+- Unknown token reputation is preserved, not treated as verified.
+- Provenance includes source_type=data_api and mode=live.
+- Does not invent a block number.
+
+### Saved evidence
+
+Directory: backend/internal/avalanche/testdata/
+
+- balances_rpc_native.json
+- balances_data_api_native.json
+- balances_rpc_demotoken.json
+- balances_data_api_erc20_http500.json
+- balances_data_api_erc20_retry_http500.json
+- balances_verification.json
+
+These files contain historical observations, not fresh runtime balances.
+Error fixtures must not be consumed as successful balance fixtures.
+API keys and authentication headers must not be committed.
+
+### Local verification commands
+
+Run from backend:
+
+```bash
+AVALANCHE_LIVE_TEST=0 go test -count=1 ./...
+```
+
+Focused balance tests:
+
+```bash
+go test -v -count=1 ./internal/avalanche -run '^(TestGetERC20Balance|TestGetERC20Decimals|TestERC20ContextErrors|TestListTokenBalances)'
+```
+
+Local adapter tests use mocks or HTTP test servers.
+They do not prove current Data API availability.
