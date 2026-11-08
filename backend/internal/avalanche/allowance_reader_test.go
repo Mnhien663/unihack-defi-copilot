@@ -23,6 +23,8 @@ type allowanceRPCStub struct {
 	balanceCalls  int
 	contractCalls int
 	blocks        []*big.Int
+	allowanceRaw  *big.Int
+	balanceRaw    *big.Int
 }
 
 func (s *allowanceRPCStub) ChainID(
@@ -45,6 +47,9 @@ func (s *allowanceRPCStub) BalanceAt(
 	blockNumber *big.Int,
 ) (*big.Int, error) {
 	s.balanceCalls++
+	if s.balanceRaw != nil {
+		return new(big.Int).Set(s.balanceRaw), nil
+	}
 	return nil, errors.New("balance must not be read for allowance")
 }
 
@@ -71,8 +76,11 @@ func (s *allowanceRPCStub) CallContract(
 			"0000000000000000000000000000000000000000000000000000000000000001" +
 			"0000000000000000000000000000000000000000000000000000000000000002",
 	)):
-		// allowance(owner, spender) = 1.234567 tokens.
-		return big.NewInt(1234567).FillBytes(make([]byte, 32)), nil
+		raw := s.allowanceRaw
+		if raw == nil {
+			raw = big.NewInt(1234567)
+		}
+		return raw.FillBytes(make([]byte, 32)), nil
 
 	case string(common.FromHex("0x313ce567")):
 		// decimals() = 6.
@@ -265,5 +273,88 @@ func TestAllowanceReaderHonorsCancelledContext(t *testing.T) {
 	}
 	if client.chainCalls != 0 {
 		t.Fatal("cancelled request reached RPC")
+	}
+}
+
+func TestAllowanceReaderReturnsZeroAllowance(t *testing.T) {
+	client := &allowanceRPCStub{
+		chainID:      big.NewInt(FujiChainID),
+		allowanceRaw: big.NewInt(0),
+	}
+
+	reader, err := NewRPCAllowanceReader(
+		client,
+		[]string{allowanceTestToken},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reader.ReadAllowance(
+		context.Background(),
+		allowanceTestToken,
+		allowanceTestOwner,
+		allowanceTestSpender,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Allowance.Raw != "0" ||
+		result.Allowance.Formatted != "0" {
+		t.Fatalf("expected zero allowance, got %+v", result.Allowance)
+	}
+
+	if result.Allowance.Asset.Decimals != 6 {
+		t.Fatal("zero allowance must retain token decimals")
+	}
+
+	if client.contractCalls != 2 || client.balanceCalls != 0 {
+		t.Fatalf("contract calls=%d, balance calls=%d",
+			client.contractCalls, client.balanceCalls)
+	}
+
+	if result.Provenance.BlockNumber == nil ||
+		*result.Provenance.BlockNumber != 12345 {
+		t.Fatal("zero allowance must retain its block provenance")
+	}
+}
+
+func TestAllowanceReaderDoesNotCapAllowanceToBalance(t *testing.T) {
+	// Token has 6 decimals: allowance = 30, balance = 10.
+	client := &allowanceRPCStub{
+		chainID:      big.NewInt(FujiChainID),
+		allowanceRaw: big.NewInt(30_000_000),
+		balanceRaw:   big.NewInt(10_000_000),
+	}
+
+	reader, err := NewRPCAllowanceReader(
+		client,
+		[]string{allowanceTestToken},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reader.ReadAllowance(
+		context.Background(),
+		allowanceTestToken,
+		allowanceTestOwner,
+		allowanceTestSpender,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Allowance.Raw != "30000000" ||
+		result.Allowance.Formatted != "30" {
+		t.Fatalf("allowance was changed: %+v", result.Allowance)
+	}
+
+	if client.balanceCalls != 0 {
+		t.Fatal("reading allowance must not depend on wallet balance")
+	}
+	if client.contractCalls != 2 {
+		t.Fatalf("contract calls=%d; want 2", client.contractCalls)
 	}
 }

@@ -20,6 +20,10 @@
 
 Definitions: `backend/internal/avalanche/types.go`.
 
+Allowance definitions: backend/internal/avalanche/allowance_reader.go.
+Receipt definitions: backend/internal/avalanche/receipts.go.
+History response types: backend/internal/avalanche/glacier.go.
+
 | Interface | Method | Implementation status |
 |---|---|---|
 | ChainReader | ReadNativeBalance | Implemented by DataAPIClient; wired to get_native_balance |
@@ -27,6 +31,8 @@ Definitions: `backend/internal/avalanche/types.go`.
 | SwapQuoter | QuoteExactInput | DTO/interface defined; adapter pending |
 | LendingPositionReader | ReadLendingPosition | DTO/interface defined; adapter pending |
 | VaultPositionReader | ReadVaultPosition | DTO/interface defined; protocol and adapter pending |
+| AllowanceReader | ReadAllowance | Implemented by RPCAllowanceReader; connected through get_allowance |
+| ReceiptReader | ReadReceipt | Implemented by RPCReceiptReader; unit-tested; not wired into a tool or main.go |
 
 DataAPIClient implements ChainReader and TokenBalanceReader.
 Low-level RPC balance and metadata functions remain available.
@@ -395,3 +401,202 @@ Verification was performed on 2026-11-08.
 - Empty/missing lists, oversized pages and malformed JSON.
 - HTTP 429/500 and context cancellation/deadline handling.
 - These unit tests use local servers or mocks, not live APIs.
+
+## History, allowance and receipt handoff — roadmap 2026-11-03
+
+Verification was performed on 2026-11-08.
+
+### Transaction history
+
+AI-facing tool: list_transactions in transaction_tool.go.
+
+Arguments:
+- wallet_address: required wallet address.
+- chain_id: required, must be 43113.
+- page_size: optional, defaults to 10; range 1–20.
+- page_token: optional opaque cursor, at most 2048 bytes.
+  Pass it unchanged; do not trim or decode it.
+
+The tool returns one page. Its data contains:
+wallet_address, transactions, optional next_page_token,
+source, chain_id and observed_at.
+
+Transactions currently use the Data API shape:
+transactions[].nativeTransaction, including chainId,
+blockNumber, blockTimestamp, txHash, txStatus, from, to and value.
+These upstream field names remain camelCase.
+
+The current Go DTO does not preserve erc20Transfers or decoded
+method information. Raw fixtures retain those upstream fields.
+Do not claim that the tool returns decoded ERC-20 transfer details.
+
+A transaction can involve the wallet through an ERC-20 transfer
+even when nativeTransaction.from/to do not match the wallet.
+Do not filter such transactions out using native from/to alone.
+
+DataAPIClient.ListTransactions accepts page sizes 1–100.
+It rejects oversized pages, oversized input/output cursors,
+missing/null transaction arrays and immediately repeated cursors.
+
+ReadTransactionHistory is a separate bounded helper:
+- At most two pages, requesting 50 records per page.
+- At most 100 records.
+- Rejects repeated continuation cursors.
+- Returns Truncated=true when another cursor remains at the limit.
+- It is not the helper called by list_transactions.
+
+Neither a page nor the bounded helper proves complete wallet history.
+An empty page does not prove the wallet has never transacted.
+
+The tool has a five-second timeout.
+Parent request cancellation is propagated as a Go error.
+
+### History error mapping
+
+| Condition | Tool code |
+|---|---|
+| Invalid JSON or unknown argument | INVALID_TOOL_ARGUMENTS |
+| Invalid wallet address | INVALID_WALLET_ADDRESS |
+| Chain other than 43113 | UNSUPPORTED_CHAIN_ID |
+| Page size outside 1–20 | INVALID_PAGE_SIZE |
+| Input cursor exceeds 2048 bytes | INVALID_PAGE_TOKEN |
+| Read timeout | UPSTREAM_TIMEOUT |
+| Client returns an error, including HTTP or decoding errors | UPSTREAM_ERROR |
+| Client returns nil page or too many records | UPSTREAM_INVALID_RESPONSE |
+| Successful empty page | EMPTY_HISTORY |
+
+EMPTY_HISTORY currently accompanies data containing transactions=[].
+The next cursor, if present, must still be preserved.
+Provider rejection of a cursor currently maps to UPSTREAM_ERROR;
+there is no dedicated invalid-provider-cursor code.
+
+### ERC-20 allowance
+
+AI-facing tool: get_allowance in allowance_tool.go.
+
+Required arguments:
+wallet_address, chain_id, token_address and spender_address.
+
+wallet_address is the ERC-20 owner.
+The reader queries allowance(owner, spender) on token_address.
+
+- Only application-allowlisted tokens are accepted.
+- A valid unfamiliar spender is accepted for this read.
+- No spender allowlist is implemented in this reader.
+- Never invent a missing token or spender address.
+- The reader verifies Fuji chain ID before contract calls.
+- Allowance and decimals are read at the same pinned block.
+- The read has a five-second timeout.
+- Amounts retain raw integer precision and token decimals.
+- The token symbol is not guessed.
+
+AllowanceResult contains:
+owner_address, spender_address, allowance and provenance.
+allowance contains asset, raw and formatted.
+
+Allowance is distinct from:
+- Wallet token balance.
+- Application budget stored by AllowanceManager.
+- Approval from AllowanceManager to a protocol adapter.
+
+Zero allowance is valid.
+Allowance may exceed the current wallet balance.
+Reading allowance must not cap it to balance.
+A positive allowance does not guarantee transfer success.
+This tool does not approve, sign or broadcast.
+
+### Allowance error mapping
+
+| Condition | Tool code |
+|---|---|
+| Invalid JSON or unknown argument | INVALID_TOOL_ARGUMENTS |
+| Invalid wallet address | INVALID_WALLET_ADDRESS |
+| Invalid token address | INVALID_TOKEN_ADDRESS |
+| Invalid spender address | INVALID_SPENDER_ADDRESS |
+| Unsupported input chain or wrong RPC chain | UNSUPPORTED_CHAIN_ID |
+| Token outside application allowlist | UNSUPPORTED_TOKEN |
+| Read timeout | UPSTREAM_TIMEOUT |
+| Unavailable token decimals | TOKEN_METADATA_UNAVAILABLE |
+| Other reader failure | UPSTREAM_ERROR |
+
+Parent request cancellation is propagated as a Go error.
+Never convert failures into a successful zero allowance.
+
+### Receipt reader
+
+Definitions and implementation: receipts.go.
+Tests: receipts_test.go.
+
+NewRPCReceiptReader accepts ReceiptRPCClient, which exposes:
+ChainID, TransactionByHash and TransactionReceipt.
+
+ReceiptRPCClient is separate from RPCReader.
+Existing balance interfaces do not need additional methods.
+The caller owns the RPC client and must close it.
+
+ReadReceipt(ctx, transactionHash) returns ReceiptResult or a Go error.
+The reader validates a 32-byte 0x-prefixed hash and Fuji chain ID.
+It checks the returned transaction identity and recovers its sender.
+
+ReceiptResult fields:
+
+| Field | Meaning |
+|---|---|
+| transaction_hash | Transaction hash |
+| from_address | Recovered transaction sender |
+| to_address | Destination; null for contract creation |
+| input | 0x-prefixed calldata |
+| value_raw | Decimal native value in wei, excluding fees |
+| chain_id | 43113 |
+| block_number | Block number; null while pending |
+| block_hash | Block hash; null while pending |
+| status | pending, succeeded or failed |
+| logs | Raw receipt logs; empty array when absent |
+| provenance | Source, chain and observation metadata |
+
+ReceiptLog preserves address, topics, data, block_number,
+transaction_hash, transaction_index, log_index and removed.
+
+- pending requires a pending transaction and a not-found receipt.
+- succeeded requires receipt status 1.
+- failed requires receipt status 0.
+- Timeout, cancellation and upstream failures remain Go errors.
+- A transaction not found is an error, not automatically pending.
+- A mined transaction with a missing receipt returns an error.
+- Inconsistent receipt identity, block or logs are rejected.
+- Removed logs are rejected.
+- Success describes execution in the reported block, not finality
+  or application-level correctness.
+
+The reader uses a five-second timeout.
+It is not wired into main.go or exposed as an AI tool yet.
+Live curl evidence validates source data; it does not establish
+that the Go reader has been exercised against live RPC.
+
+### Captured samples
+
+Directory: backend/internal/avalanche/testdata/
+
+- history_data_api_http500.json: initial upstream failure.
+- history_data_api_page1.json: successful first page.
+- history_data_api_page2.json: successful continuation page.
+- receipt_fuji_rpc.json: chain ID, transaction and receipt batch.
+
+History observations:
+- Initial HTTP 500: 2026-11-08T05:34:56Z.
+- Page 1 HTTP 200: 2026-11-08T05:36:37Z.
+- Page 2 HTTP 200: 2026-11-08T05:37:37Z.
+- Four distinct transactions across two pages.
+- A continuation cursor remains; history is incomplete.
+- No automatic RPC history fallback was added.
+
+Receipt observation: 2026-11-08T06:20:03Z.
+Transaction:
+0x3b61008d6400772ce94848239c431d7dae62fa78360af24a8b334d6ae81b4e72
+
+RPC and Snowtrace Fuji match on chain, hash, block 60111917,
+execution success, sender, destination, zero native value and
+six logs. See docs/evidence.md.
+
+Samples are historical evidence, not fresh wallet state.
+Backend reads do not submit transactions.
