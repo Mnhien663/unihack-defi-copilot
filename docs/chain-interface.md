@@ -28,7 +28,7 @@ History response types: backend/internal/avalanche/glacier.go.
 |---|---|---|
 | ChainReader | ReadNativeBalance | Implemented by DataAPIClient; wired to get_native_balance |
 | TokenBalanceReader | ListTokenBalances | Implemented by DataAPIClient; wired to list_token_balances; live ERC-20 request returned HTTP 500 during verification |
-| SwapQuoter | QuoteExactInput | DTO/interface defined; adapter pending |
+| SwapQuoter | QuoteExactInput | Implemented by LFJQuoteReader for the configured Fuji USDT/USDC pair; not wired into an AI tool or main.go |
 | LendingPositionReader | ReadLendingPosition | DTO/interface defined; adapter pending |
 | VaultPositionReader | ReadVaultPosition | DTO/interface defined; protocol and adapter pending |
 | AllowanceReader | ReadAllowance | Implemented by RPCAllowanceReader; connected through get_allowance |
@@ -600,3 +600,139 @@ six logs. See docs/evidence.md.
 
 Samples are historical evidence, not fresh wallet state.
 Backend reads do not submit transactions.
+
+## Swap quote handoff — roadmap 2026-11-04
+
+### Implementation and scope
+
+- Implementation: backend/internal/avalanche/quote.go.
+- Tests: backend/internal/avalanche/quote_test.go.
+- Constructor: NewLFJQuoteReader(client RPCReader).
+- Interface: SwapQuoter.QuoteExactInput(ctx, request).
+- Supported network: Avalanche Fuji, chain ID 43113.
+- Supported route: the configured LFJ V2.2 USDT/USDC pair,
+  in either direction.
+- Route discovery and native AVAX wrapping are not implemented.
+- The reader is not wired into main.go or an AI-facing tool yet.
+- Dev 1 owns get_swap_quote schema, tool registration and AI wording.
+
+### Request
+
+SwapQuoteRequest contains:
+- token_path: exactly two Asset objects.
+- amount_in_raw: positive decimal integer string, within uint128.
+- slippage_bps: optional integer; default 50, maximum 500.
+  Explicit zero is supported.
+
+Token addresses and chain IDs must match the configured route.
+Asset decimals must match on-chain metadata.
+Caller-supplied symbols are not trusted.
+
+Convert user-entered decimal amounts using ParseTokenAmount before
+calling the reader. Reject excess fractional digits without rounding.
+Do not convert amounts through floating point.
+
+### Response
+
+SwapQuoteResult contains:
+- protocol and router_address.
+- token_path and hops describing the configured direct route.
+- amount_in and amount_out.
+- min_amount_out.
+- fee, denominated in the input token.
+- slippage_bps.
+- expires_at.
+- provenance, including the pinned block number.
+
+All amounts use TokenAmount: asset, raw and formatted.
+
+The reader checks pair token identities, reads token decimals and
+calls router getSwapOut at the same selected block.
+
+A quote is rejected if any input remains unconsumed or output is zero.
+Router output already reflects swap fees; do not subtract fee again.
+
+### Slippage and expiry
+
+minOut = floor(amountOut * (10000 - slippageBps) / 10000).
+
+A minimum output that rounds to zero is rejected.
+
+Quote validity is 60 seconds from the start of the read.
+RPC read time consumes this validity.
+The read has a five-second timeout.
+
+Call ValidateQuoteExpiry(quote, time.Now().UTC()) before using a quote.
+At expires_at, the quote is already expired.
+This helper checks freshness only; it does not validate calldata.
+
+A future execution integration must enforce minimum output and a
+deadline in the transaction itself. A fresh quote does not guarantee
+execution or reserve availability.
+
+No price-impact field is returned because a validated price-impact
+calculation has not been implemented.
+
+### Errors
+
+Use errors.Is where a sentinel is available:
+
+| Error | Meaning |
+|---|---|
+| ErrUnsupportedSwapRoute | Unsupported path, including identical tokens |
+| ErrWrongChain | Request or RPC chain is not Fuji |
+| ErrInvalidAddress | Malformed token address |
+| ErrInsufficientLiquidity | Partial input consumption or zero output |
+| ErrQuoteExpired | Quote validity has elapsed |
+| ErrTokenMetadataUnavailable | Token decimals could not be read |
+| context.Canceled | Caller canceled the read |
+| context.DeadlineExceeded | Read deadline exceeded |
+
+Other validation and upstream failures return Go errors.
+Never convert errors into a successful zero quote.
+AI-facing error codes remain the responsibility of the tool adapter.
+
+### Source and configuration
+
+- Source: LFJ Fuji LBRouter.
+- source_type=rpc, mode=live, is_demo=false.
+- Protocol manifest: contracts/deployments/fuji.json.
+- The current Go reader uses address constants in quote.go;
+  it does not load the JSON manifest automatically.
+- Keep manifest and Go configuration consistent when changing routes.
+- Minimal ABI definitions are embedded in quote.go.
+
+Router:
+0x18556DA13313f3532c54711497A8FedAC273220E
+
+Pair:
+0xc3b7307184381f65B398d385a71EF0490239a2b3
+
+Token X, USDT:
+0xAb231A5744C8E6c45481754928cCfFFFD4aa0732
+
+Token Y, USDC:
+0xB6076C93701D6a07266c31066B298AeC6dd65c2d
+
+Both tokens use 6 decimals.
+LFJ USDC is distinct from the previously tested Aave USDC.
+
+### Evidence and limitations
+
+- Verification block: 60720761.
+- Observation: 2026-11-08T07:33:09.163Z.
+- Both directions returned output=999900 for input=1000000,
+  with inputLeft=0 and fee=100 raw input-token units.
+- Fixture: backend/internal/avalanche/testdata/quote_fuji_router.json.
+- Script: contracts/scripts/check-swap-quote.mjs.
+- Bytecode capture:
+  backend/internal/avalanche/testdata/quote_fuji_contract_code.json.
+
+The Node script exercised live router reads.
+Go adapter tests used mocks; live Go execution remains unverified.
+Captured amounts are historical evidence, not fixed prices.
+
+Quoter route selection was not re-executed in this verification.
+No demo AMM was deployed.
+Wallet swap execution and AllowanceManager integration remain unverified.
+The reader does not approve, sign or broadcast transactions.

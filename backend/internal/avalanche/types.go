@@ -87,6 +87,7 @@ type TokenBalancePage struct {
 type SwapQuoteRequest struct {
 	TokenPath   []Asset `json:"token_path"`
 	AmountInRaw string  `json:"amount_in_raw"`
+	SlippageBps *uint16 `json:"slippage_bps,omitempty"`
 }
 
 // SwapQuoteHop identifies the pool selected for one swap step.
@@ -106,6 +107,10 @@ type SwapQuoteResult struct {
 	AmountIn      TokenAmount    `json:"amount_in"`
 	AmountOut     TokenAmount    `json:"amount_out"`
 	Provenance    Provenance     `json:"provenance"`
+	MinAmountOut  TokenAmount    `json:"min_amount_out"`
+	Fee           TokenAmount    `json:"fee"`
+	SlippageBps   uint16         `json:"slippage_bps"`
+	ExpiresAt     time.Time      `json:"expires_at"`
 }
 
 // LendingAssetPosition describes one supplied or borrowed asset.
