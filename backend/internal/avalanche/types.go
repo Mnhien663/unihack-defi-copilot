@@ -105,6 +105,7 @@ type SwapQuoteResult struct {
 	Hops          []SwapQuoteHop `json:"hops"`
 	AmountIn      TokenAmount    `json:"amount_in"`
 	AmountOut     TokenAmount    `json:"amount_out"`
+	Fee           TokenAmount    `json:"fee"`
 	Provenance    Provenance     `json:"provenance"`
 }
 

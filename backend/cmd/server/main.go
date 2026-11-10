@@ -51,6 +51,7 @@ func main() {
 	var transactionClient tools.TransactionClient
 	var transactionSource string
 	var allowanceReader avalanche.AllowanceReader
+	var swapQuoteTool *tools.GetSwapQuoteTool
 
 	switch dataMode {
 	case "mock":
@@ -87,6 +88,34 @@ func main() {
 		}
 
 		allowanceReader = rpcAllowanceReader
+
+		quoteConfig := avalanche.LFJQuoteConfig{
+			RouterAddress: "0x18556DA13313f3532c54711497A8FedAC273220E",
+			PoolAddress:   "0xc3b7307184381f65B398d385a71EF0490239a2b3",
+			BinStep:       1,
+			TokenA: avalanche.Asset{
+				ChainID:  uint64(avalanche.FujiChainID),
+				Address:  "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+				Symbol:   "USDT",
+				Decimals: 6,
+			},
+			TokenB: avalanche.Asset{
+				ChainID:  uint64(avalanche.FujiChainID),
+				Address:  "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+				Symbol:   "USDC",
+				Decimals: 6,
+			},
+		}
+
+		quoter, err := avalanche.NewLFJQuoter(rpcClient, quoteConfig)
+		if err != nil {
+			log.Fatalf("Cannot create LFJ quoter: %v", err)
+		}
+
+		swapQuoteTool, err = tools.NewGetSwapQuoteTool(quoter, quoteConfig)
+		if err != nil {
+			log.Fatalf("Cannot create swap quote tool: %v", err)
+		}
 
 	default:
 		log.Fatalf(
@@ -133,15 +162,21 @@ func main() {
 		}
 	}
 
-	policies := ai.NewStaticPolicyEngine(
-		[]string{
-			tools.NativeBalanceToolName,
-			tools.ListTokenBalancesToolName,
-			tools.ListTransactionsToolName,
-			tools.GetAllowanceToolName,
-		},
-		nil,
-	)
+	readToolNames := []string{
+		tools.NativeBalanceToolName,
+		tools.ListTokenBalancesToolName,
+		tools.ListTransactionsToolName,
+		tools.GetAllowanceToolName,
+	}
+
+	if swapQuoteTool != nil {
+		if err := registry.Register(swapQuoteTool); err != nil {
+			log.Fatalf("Cannot register swap quote tool: %v", err)
+		}
+		readToolNames = append(readToolNames, tools.GetSwapQuoteToolName)
+	}
+
+	policies := ai.NewStaticPolicyEngine(readToolNames, nil)
 
 	provider := strings.ToLower(
 		strings.TrimSpace(os.Getenv("AI_PROVIDER")),
