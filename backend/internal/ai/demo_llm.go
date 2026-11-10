@@ -51,6 +51,39 @@ func (d *DemoLLMClient) Complete(
 		return LLMResponse{}, ErrDemoLLMNoTools
 	}
 
+	const quoteTestPrefix = "quote-test:"
+	const quoteToolName = "get_swap_quote"
+
+	if lastMessage.Role == RoleUser &&
+		strings.HasPrefix(lastMessage.Content, quoteTestPrefix) {
+		if !hasDemoTool(request.Tools, quoteToolName) {
+			return LLMResponse{}, fmt.Errorf(
+				"%w: %s", ErrDemoLLMNoTool, quoteToolName,
+			)
+		}
+
+		raw := strings.TrimSpace(strings.TrimPrefix(
+			lastMessage.Content, quoteTestPrefix,
+		))
+		if !json.Valid([]byte(raw)) {
+			return LLMResponse{
+				Message: Message{
+					Role:    RoleAssistant,
+					Content: "Provide a JSON object after quote-test:.",
+				},
+			}, nil
+		}
+
+		return LLMResponse{
+			Message: Message{Role: RoleAssistant},
+			ToolCalls: []ToolCall{{
+				ID:        "demo-call-001",
+				Name:      quoteToolName,
+				Arguments: json.RawMessage(raw),
+			}},
+		}, nil
+	}
+
 	toolName := selectDemoTool(lastMessage.Content)
 
 	if !hasDemoTool(request.Tools, toolName) {
@@ -206,6 +239,14 @@ func (d *DemoLLMClient) finalResponse(
 	var err error
 
 	switch toolMessage.Name {
+	case "get_swap_quote":
+		content = fmt.Sprintf(
+			"Read-only swap quote. Source: %s. "+
+				"See the tool result for expected output, minimum output, fee, and expiry. "+
+				"No swap was submitted.",
+			result.Source,
+		)
+
 	case demoTransactionsToolName:
 		content, err = demoTransactionResponse(locale, result)
 
