@@ -147,3 +147,9 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Hardhat dependencies and generated files
+/contracts/node_modules/
+/contracts/artifacts/
+/contracts/cache/
+/contracts/types/

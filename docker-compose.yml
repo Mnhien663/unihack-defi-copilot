@@ -1,4 +1,3 @@
-version: '3.8'
 services:
  # Database
  db:
@@ -7,18 +6,24 @@ services:
    restart: always
    environment:
      POSTGRES_USER: admin
-     POSTGRES_PASSWORD: ${DB_PASTWORD}
+     POSTGRES_PASSWORD: ${DB_PASSWORD}
      POSTGRES_DB: deficopilot_db
    ports:
      - "5432:5432"
    volumes:
      - pgdata:/var/lib/postgresql/data
+   healthcheck:
+     test: ["CMD-SHELL", "pg_isready -U admin -d deficopilot_db"]
+     interval: 5s
+     timeout: 3s
+     retries: 12
+     start_period: 5s
 
  # Backend
  backend:
    build:
-     context: .
-     dockerfile: backend/Dockerfile
+     context: ./backend
+     dockerfile: Dockerfile
    container_name: deficopilot_backend
    restart: always
    ports:
@@ -28,16 +33,24 @@ services:
      - DB_HOST=db
      - DB_PORT=5432
      - DB_USER=admin
-     - DB_PASSWORD=${DB_PASTWORD}
+     - DB_PASSWORD=${DB_PASSWORD}
      - DB_NAME=deficopilot_db
+     - DB_SSLMODE=${DB_SSLMODE:-disable}
     # Ket noi AI
-     - AI_API_KEY=${AI_API_KEY}
+     - AI_PROVIDER=${AI_PROVIDER:-mock}
+     - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+     - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
+     - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+     - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-flash-preview}
     # Ket noi Avalanche
+     - DATA_MODE=${DATA_MODE:-mock}
      - AVALANCHE_RPC_URL=${AVALANCHE_RPC_URL}
      - SNOWTRACE_API_KEY=${SNOWTRACE_API_KEY}
      - AGENT_PRIVATE_KEY=${AGENT_PRIVATE_KEY}
+     - AVALANCHE_DATA_API_KEY=${AVALANCHE_DATA_API_KEY:-}
    depends_on:
      - db
+   stop_grace_period: 45s
 
  # Frontend
  frontend:
@@ -53,7 +66,27 @@ services:
      - VITE_PRIVY_APP_ID=${VITE_PRIVY_APP_ID}
    depends_on:
      - backend
-  
- # Khai bao volumes
- volumes: 
-   pgdata:
+
+ # Database migrations
+ migrate:
+   image: migrate/migrate:v4.18.3
+   profiles: ["tools"]
+   restart: "no"
+   environment:
+     PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+   volumes:
+     - ./backend/migrations:/migrations:ro
+   entrypoint:
+     - migrate
+     - -path
+     - /migrations
+     - -database
+     - postgres://admin@db:5432/deficopilot_db?sslmode=disable
+   command: ["up"]
+   depends_on:
+     db:
+       condition: service_healthy
+
+# Khai bao volumes
+volumes: 
+  pgdata:

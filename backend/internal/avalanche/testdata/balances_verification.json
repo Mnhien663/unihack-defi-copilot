@@ -1,0 +1,55 @@
+{
+  "chain_id": 43113,
+  "wallet_address": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+  "native": {
+    "rpc": {
+      "file": "balances_rpc_native.json",
+      "observed_at": "2026-11-08T04:28:35Z",
+      "block_tag": "latest",
+      "raw": "99999999831919520"
+    },
+    "data_api": {
+      "file": "balances_data_api_native.json",
+      "observed_at": "2026-11-08T04:32:31Z",
+      "raw": "99999999831919520"
+    },
+    "decimals": 18,
+    "formatted": "0.09999999983191952",
+    "raw_values_match": true,
+    "same_block_verified": false
+  },
+  "erc20_rpc": {
+    "file": "balances_rpc_demotoken.json",
+    "observed_at": "2026-11-08T04:35:00Z",
+    "token_address": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+    "block_tag": "latest",
+    "raw": "0",
+    "decimals": 18,
+    "formatted": "0"
+  },
+  "erc20_data_api": {
+    "page_size": 10,
+    "filter_spam_tokens": true,
+    "attempts": [
+      {
+        "file": "balances_data_api_erc20_http500.json",
+        "observed_at": "2026-11-08T04:38:55Z",
+        "http_status": 500
+      },
+      {
+        "file": "balances_data_api_erc20_retry_http500.json",
+        "observed_at": "2026-11-08T04:40:05Z",
+        "http_status": 500
+      }
+    ],
+    "valid_balance_result": false,
+    "rpc_comparison_available": false,
+    "failure_cause": "undetermined"
+  },
+  "notes": [
+    "Observation times were recorded after displaying each response.",
+    "These files are historical live observations, not current balances.",
+    "Data API errors must not be interpreted as zero token balances.",
+    "The token-list request covers one spam-filtered page only."
+  ]
+}
