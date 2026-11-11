@@ -128,7 +128,7 @@ func main() {
 			log.Fatalf("Cannot create swap quote tool: %v", err)
 		}
 
-		lendingReader, err := avalanche.NewAavePositionReader(
+		lendingReader, err := avalanche.NewAaveLendingReader(
 			rpcClient,
 			"0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40", // Aave V3 Fuji Pool
 			"0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014", // Aave V3 Fuji Data Provider

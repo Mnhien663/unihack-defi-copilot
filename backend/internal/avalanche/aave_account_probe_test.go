@@ -227,7 +227,7 @@ func TestAaveAccountProbe(t *testing.T) {
 		)
 	}
 
-	reader, err := NewAavePositionReader(client, pool.Hex(), dataProvider.Hex())
+	reader, err := NewAaveLendingReader(client, pool.Hex(), dataProvider.Hex())
 	if err != nil {
 		t.Fatal(err)
 	}

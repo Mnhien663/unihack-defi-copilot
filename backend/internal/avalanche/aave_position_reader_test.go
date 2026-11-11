@@ -54,7 +54,7 @@ func TestAavePositionReaderPositions(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rpc := &aavePositionTestRPC{}
-			reader, err := NewAavePositionReader(rpc, pool.Hex(), provider.Hex())
+			reader, err := NewAaveLendingReader(rpc, pool.Hex(), provider.Hex())
 			if err != nil {
 				t.Fatal(err)
 			}
