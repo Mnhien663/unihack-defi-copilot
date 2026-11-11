@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 const (
@@ -31,6 +32,7 @@ type VaultMetricsResult struct {
 	Position      VaultPositionResult `json:"position"`
 	TotalAssets   TokenAmount         `json:"total_assets"`
 	TotalShares   TokenAmount         `json:"total_shares"`
+	BlockTime     *time.Time          `json:"block_time,omitempty"`
 	DepositAssets TokenAmount         `json:"deposit_assets"`
 	PreviewShares TokenAmount         `json:"preview_shares"`
 	MaxDeposit    TokenAmount         `json:"max_deposit"`
@@ -351,6 +353,11 @@ func (r *RPCVaultReader) ReadVault(
 		return VaultMetricsResult{}, err
 	}
 
+	blockTime := readVaultBlockTime(readCtx, r.client, blockNumber)
+	if err := readCtx.Err(); err != nil {
+		return VaultMetricsResult{}, err
+	}
+
 	return VaultMetricsResult{
 		Position: VaultPositionResult{
 			Protocol:      "DemoVault ERC-4626",
@@ -370,6 +377,7 @@ func (r *RPCVaultReader) ReadVault(
 		},
 		TotalAssets:   amounts[2],
 		TotalShares:   amounts[3],
+		BlockTime:     blockTime,
 		DepositAssets: amounts[4],
 		PreviewShares: amounts[5],
 		MaxDeposit:    amounts[6],
@@ -394,6 +402,31 @@ func (r *RPCVaultReader) ReadVaultPosition(
 		return VaultPositionResult{}, err
 	}
 	return result.Position, nil
+}
+
+type vaultHeaderReader interface {
+	HeaderByNumber(context.Context, *big.Int) (*types.Header, error)
+}
+
+func readVaultBlockTime(
+	ctx context.Context,
+	client RPCReader,
+	block *big.Int,
+) *time.Time {
+	reader, ok := client.(vaultHeaderReader)
+	if !ok || block == nil {
+		return nil
+	}
+
+	header, err := reader.HeaderByNumber(ctx, block)
+	if err != nil || header == nil || header.Number == nil ||
+		header.Number.Cmp(block) != 0 ||
+		header.Time == 0 || header.Time > uint64(1<<63-1) {
+		return nil
+	}
+
+	sourceTime := time.Unix(int64(header.Time), 0).UTC()
+	return &sourceTime
 }
 
 var _ VaultMetricsReader = (*RPCVaultReader)(nil)

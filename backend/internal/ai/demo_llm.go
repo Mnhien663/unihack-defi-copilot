@@ -140,6 +140,19 @@ func (d *DemoLLMClient) Complete(
 		toolArguments["target_token_address"] = target
 	}
 
+	if toolName == "get_vault_metrics" {
+		vault := demoNamedAddress(lastMessage.Content, "vault_address")
+		if vault == "" {
+			return LLMResponse{
+				Message: Message{
+					Role:    RoleAssistant,
+					Content: "Please provide a complete vault_address.",
+				},
+			}, nil
+		}
+		toolArguments["vault_address"] = vault
+	}
+
 	arguments, err := json.Marshal(toolArguments)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf(
@@ -164,6 +177,10 @@ func (d *DemoLLMClient) Complete(
 
 func selectDemoTool(message string) string {
 	normalized := strings.ToLower(strings.TrimSpace(message))
+
+	if strings.HasPrefix(normalized, "vault-test ") {
+		return "get_vault_metrics"
+	}
 
 	if strings.HasPrefix(normalized, "liquidation-test ") {
 		return "get_liquidation_price"
@@ -261,6 +278,24 @@ func (d *DemoLLMClient) finalResponse(
 	var err error
 
 	switch toolMessage.Name {
+	case "get_vault_metrics":
+		var data struct {
+			Freshness string   `json:"freshness"`
+			Warnings  []string `json:"warnings"`
+		}
+		if err := json.Unmarshal(result.Data, &data); err != nil {
+			return LLMResponse{}, fmt.Errorf("decode demo vault metrics: %w", err)
+		}
+
+		content = fmt.Sprintf(
+			"DemoVault metrics from %s. Freshness: %s. "+
+				"APR, APY, and USD TVL are unavailable.",
+			result.Source, data.Freshness,
+		)
+		if len(data.Warnings) > 0 {
+			content += " " + strings.Join(data.Warnings, " ")
+		}
+
 	case "get_liquidation_price":
 		var scenario struct {
 			Status string `json:"scenario_status"`

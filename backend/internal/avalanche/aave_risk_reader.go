@@ -18,7 +18,7 @@ type AaveRiskSnapshot struct {
 	BaseUnit string
 }
 
-func (r *AavePositionReader) ReadLendingRisk(
+func (r *AaveLendingReader) ReadLendingRisk(
 	ctx context.Context,
 	walletAddress string,
 ) (AaveRiskSnapshot, error) {

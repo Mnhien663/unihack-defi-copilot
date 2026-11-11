@@ -63,6 +63,7 @@ func main() {
 	var swapQuoteTool *tools.GetSwapQuoteTool
 	var lendingPositionTool *tools.GetLendingPositionTool
 	var liquidationPriceTool *tools.GetLiquidationPriceTool
+	var vaultMetricsTool *tools.GetVaultMetricsTool
 
 	switch dataMode {
 	case "mock":
@@ -128,7 +129,7 @@ func main() {
 			log.Fatalf("Cannot create swap quote tool: %v", err)
 		}
 
-		lendingReader, err := avalanche.NewAavePositionReader(
+		lendingReader, err := avalanche.NewAaveLendingReader(
 			rpcClient,
 			"0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40", // Aave V3 Fuji Pool
 			"0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014", // Aave V3 Fuji Data Provider
@@ -145,6 +146,18 @@ func main() {
 		liquidationPriceTool, err = tools.NewGetLiquidationPriceTool(lendingReader)
 		if err != nil {
 			log.Fatalf("Cannot create liquidation price tool: %v", err)
+		}
+
+		vaultReader, err := avalanche.NewRPCVaultReader(rpcClient)
+		if err != nil {
+			log.Fatalf("Cannot create vault reader: %v", err)
+		}
+
+		const vaultMetricMaxAge = 5 * time.Minute
+
+		vaultMetricsTool, err = tools.NewGetVaultMetricsTool(vaultReader, vaultMetricMaxAge)
+		if err != nil {
+			log.Fatalf("Cannot create vault metrics tool: %v", err)
 		}
 
 	default:
@@ -219,6 +232,16 @@ func main() {
 		}
 		readToolNames = append(readToolNames, tools.GetLiquidationPriceToolName)
 	}
+
+	if vaultMetricsTool != nil {
+		if err := registry.Register(vaultMetricsTool); err != nil {
+			log.Fatalf("Cannot register vault metrics tool: %v", err)
+		}
+		readToolNames = append(readToolNames, tools.GetVaultMetricsToolName)
+	}
+
+	log.Printf("Read tools registered (%d): %s",
+		len(readToolNames), strings.Join(readToolNames, ", "))
 
 	policies := ai.NewStaticPolicyEngine(readToolNames, nil)
 

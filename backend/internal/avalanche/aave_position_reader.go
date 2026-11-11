@@ -20,18 +20,18 @@ const aavePositionABI = `[
 	            {"type":"uint256"},{"type":"uint256"},{"type":"uint256"}]}
 ]`
 
-type AavePositionReader struct {
+type AaveLendingReader struct {
 	client       RPCReader
 	pool         common.Address
 	dataProvider common.Address
 	poolABI      abi.ABI
 }
 
-func NewAavePositionReader(
+func NewAaveLendingReader(
 	client RPCReader,
 	poolAddress string,
 	dataProviderAddress string,
-) (*AavePositionReader, error) {
+) (*AaveLendingReader, error) {
 	if client == nil {
 		return nil, fmt.Errorf("Aave RPC client is nil")
 	}
@@ -53,7 +53,7 @@ func NewAavePositionReader(
 		return nil, fmt.Errorf("parse Aave Pool ABI: %w", err)
 	}
 
-	return &AavePositionReader{
+	return &AaveLendingReader{
 		client:       client,
 		pool:         pool,
 		dataProvider: provider,
@@ -61,7 +61,7 @@ func NewAavePositionReader(
 	}, nil
 }
 
-func (r *AavePositionReader) callPool(
+func (r *AaveLendingReader) callPool(
 	ctx context.Context,
 	block *big.Int,
 	method string,
@@ -90,7 +90,7 @@ func (r *AavePositionReader) callPool(
 	return values, nil
 }
 
-func (r *AavePositionReader) ReadLendingPosition(
+func (r *AaveLendingReader) ReadLendingPosition(
 	ctx context.Context,
 	walletAddress string,
 ) (LendingPositionResult, error) {
@@ -121,7 +121,7 @@ func (r *AavePositionReader) ReadLendingPosition(
 	return r.readLendingPositionAtBlock(readCtx, wallet, height)
 }
 
-func (r *AavePositionReader) readLendingPositionAtBlock(
+func (r *AaveLendingReader) readLendingPositionAtBlock(
 	readCtx context.Context,
 	wallet common.Address,
 	height uint64,
@@ -227,4 +227,4 @@ func aavePositionAmount(asset Asset, raw string) (TokenAmount, error) {
 	return TokenAmount{Asset: asset, Raw: raw, Formatted: formatted}, nil
 }
 
-var _ LendingPositionReader = (*AavePositionReader)(nil)
+var _ LendingPositionReader = (*AaveLendingReader)(nil)
