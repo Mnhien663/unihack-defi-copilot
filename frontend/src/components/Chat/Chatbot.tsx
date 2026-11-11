@@ -1,6 +1,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import './Chatbot.css';
+import ChatWelcome from "./ChatWelcome";
+import PortfolioRiskCard from "../Portfolio/PortfolioRiskCard";
 
 type ChatMessage = {
   id: number;
@@ -57,12 +59,14 @@ function Chatbot() {
 
   return (
     <section className="chatbot">
-      <h2>Chat với DeFi Copilot</h2>
+      <ChatWelcome onSelect={setDraft} />
 
       <div
         className="chat-messages"
         ref={messagesContainerRef}
       >
+        <PortfolioRiskCard />
+
         {messages.map((message) => (
           <div
             key={message.id}
@@ -73,37 +77,34 @@ function Chatbot() {
         ))}
       </div>
 
-      
-<label htmlFor="chat-input">Tin nhắn</label>
+    <div className="dc-chat-composer">
+      <div className="chat-input-row">
+      <input
+          id="chat-input"
+          type="text"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+              if (
+                  event.key === 'Enter' &&
+                  !event.nativeEvent.isComposing
+              ) {
+                  handleSend();
+              }
+          }}
+          placeholder="Nhập câu hỏi về Avalanche..."
+      />
 
-    <div className="chat-input-row">
-    <input
-        id="chat-input"
-        type="text"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-            if (
-                event.key === 'Enter' &&
-                !event.nativeEvent.isComposing
-            ) {
-                handleSend();
-            }
-        }}
-        placeholder="Nhập câu hỏi về Avalanche..."
-    />
-
-    <button
-        type="button"
-        onClick={handleSend}
-        disabled={!draft.trim()}
-    >
-        Send
-    </button>
+      <button
+          type="button"
+          onClick={handleSend}
+          disabled={!draft.trim()}
+      >
+          Send
+      </button>
+      </div>
     </div>
 
-
-    <p>Bạn đang nhập: {draft}</p>
     </section>
   );
 }

@@ -1,0 +1,149 @@
+
+.dc-sidebar {
+  width: 100%;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 20px 16px;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+
+  background: var(--color-sidebar);
+  color: white;
+  overflow-y: auto;
+}
+
+.dc-sidebar-top {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.dc-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+}
+
+.dc-brand-icon {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: var(--color-accent);
+  border-radius: 10px;
+  font-size: 24px;
+}
+
+.dc-brand strong {
+  display: block;
+  font-size: 16px;
+}
+
+.dc-brand p {
+  margin: 4px 0 0;
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.dc-new-chat {
+  width: 100%;
+  padding: 13px 10px;
+
+  border: 1px solid #465064;
+  border-radius: 9px;
+
+  background: #2a3142;
+  color: #ffffff;
+
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.dc-new-chat:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.dc-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dc-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  padding: 13px 12px;
+  border-radius: 8px;
+
+  font-size: 13px;
+  white-space: normal;
+}
+
+.dc-nav-item span {
+  font-size: 19px;
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.dc-nav-active {
+  background: #111b30;
+  border-left: 3px solid var(--color-accent);
+  color: white;
+  font-weight: 700;
+}
+
+.dc-nav-disabled {
+  color: #96a3b8;
+}
+
+.dc-sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  padding-top: 16px;
+  border-top: 1px solid #374151;
+}
+
+.dc-sidebar-network {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+
+  border: 1px solid #374151;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.dc-sidebar-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.dc-sidebar-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 0 8px;
+}

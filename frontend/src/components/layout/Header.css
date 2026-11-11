@@ -1,0 +1,74 @@
+
+.dc-header {
+  min-height: 64px;
+  padding: 12px 24px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  background: var(--color-card);
+  border-bottom: 1px solid #e2e5ed;
+}
+
+.dc-header-title h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.dc-header-title p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.dc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dc-network-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 12px;
+  border-radius: 999px;
+
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dc-network-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.dc-wallet-status {
+  padding: 9px 12px;
+  border-radius: 8px;
+
+  background: #eff4ff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .dc-header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+
+  .dc-header-actions {
+    flex-wrap: wrap;
+  }
+}

@@ -1,0 +1,147 @@
+
+.dc-portfolio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+
+  padding: 20px;
+  margin-top: 20px;
+
+  background: var(--color-card);
+  border: 1px solid #e2e5ed;
+  border-radius: 12px;
+}
+
+.dc-portfolio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.dc-portfolio-header h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.dc-portfolio-header p {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.dc-demo-label {
+  padding: 5px 8px;
+  border-radius: 5px;
+
+  color: #92400e;
+  background: #fef3c7;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.dc-assets-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dc-asset {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+
+  padding: 14px;
+  border: 1px solid #e2e5ed;
+  border-radius: 10px;
+  background: #f4f6fb;
+}
+
+.dc-asset-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.dc-token-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.dc-asset-amount {
+  font-family: var(--font-code);
+  font-size: 18px;
+}
+
+.dc-asset-value {
+  color: #64748b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.dc-health-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  padding: 14px;
+  border: 1px solid #a7e8c3;
+  border-radius: 10px;
+  background: #f0fdf4;
+}
+
+.dc-health-score {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  width: 55px;
+  height: 55px;
+  border: 2px solid #16a34a;
+  border-radius: 50%;
+
+  color: #166534;
+  background: white;
+  font-family: var(--font-code);
+  font-weight: 700;
+}
+
+.dc-health-card strong {
+  font-size: 14px;
+}
+
+.dc-health-card p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.dc-health-demo {
+  margin-left: auto;
+  color: #166534;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 800px) {
+  .dc-assets-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dc-health-card {
+    flex-wrap: wrap;
+  }
+}

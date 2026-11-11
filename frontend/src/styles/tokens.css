@@ -1,0 +1,19 @@
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --color-sidebar: #151b2b;
+  --color-page: #f8f9ff;
+  --color-card: #ffffff;
+  --color-accent: #d93639;
+  --color-text: #0b1c30;
+
+  --font-ui: 'Plus Jakarta Sans', Arial, sans-serif;
+  --font-code: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-ui);
+  background-color: var(--color-page);
+  color: var(--color-text);
+}
