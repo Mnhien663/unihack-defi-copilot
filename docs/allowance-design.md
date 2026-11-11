@@ -32,31 +32,33 @@ Approval does not transfer tokens and does not create an app budget.
 ## 4. Proposed Execution Flow
 
 1. Owner approves AllowanceManager on the input token.
-2. Owner sets a budget and expiry in AllowanceManager.
-3. Owner calls a typed executeSwap or executeDeposit operation.
-4. Manager validates the token, adapter, budget and expiry.
-5. Manager decreases the remaining budget by the input amount.
-6. Manager calls transferFrom(owner, manager, amount).
-7. Manager forwards that amount to the approved adapter.
-8. Adapter executes the supported router/vault operation.
-9. Output tokens or vault shares are delivered to the owner.
+2. Owner sets a budget and expiry.
+3. Owner calls executeSwap or executeDeposit.
+4. Manager derives owner and recipient from msg.sender.
+5. Manager validates supported tokens, configured adapter, amount,
+   deadline and minimum output.
+6. Manager consumes the owner's input-token budget.
+7. Manager pulls the exact input amount using SafeERC20.safeTransferFrom.
+8. Manager approves only the configured adapter for that exact amount.
+9. Adapter pulls input tokens from the manager and executes the operation.
+10. Output tokens or vault shares are delivered to the owner.
+11. Manager resets the adapter's input-token allowance to zero.
+12. Manager verifies input custody and actual recipient output.
 
-If any required step fails, the entire transaction must revert,
-including the budget decrease and token movements.
-
-The adapter integration must define any additional approval needed
-between the adapter and its router/vault.
+Execution must revert atomically if any required check or operation fails.
+The manager must not retain input tokens from a successful operation.
+Pre-existing manager balances must not be spent by the operation.
 
 ## 5. Approval and Token Flow
 
 ```mermaid
 flowchart TD
-    O["Owner wallet"] -->|"Calls approve(manager, amount)"| T["ERC-20 token"]
-    O -->|"Sets budget and requests execution"| M["AllowanceManager"]
-    M -->|"Calls transferFrom(owner, manager, amount)"| T
-    M -->|"Forwards input tokens and calls typed operation"| A["Approved adapter"]
-    A -->|"Executes supported operation"| P["Router or vault"]
-    P -->|"Output tokens or shares, directly or through adapter"| O
+    O["Owner wallet"] -->|"Approves manager; requests execution"| M["AllowanceManager"]
+    M -->|"Pulls input; approves exact amount"| T["Input ERC-20"]
+    M -->|"Calls typed operation"| A["Configured adapter"]
+    A -->|"Pulls input from manager"| T
+    A -->|"Executes swap or deposit"| P["Router or vault"]
+    P -->|"Delivers output directly or through adapter"| O
 ```
 
 ## 6. ERC-20 Allowance vs App Budget
@@ -111,102 +113,134 @@ the app remaining budget becomes 10 USDC.
 - remaining(owner, token) returns zero for expired or unset budgets.
 - BudgetSet and BudgetRevoked identify the owner and token.
 - Budget management does not change ERC-20 approvals.
-- Token and adapter support checks are still required in execution.
+- Execution checks supported tokens and configured adapters.
 
 ## 10. Typed Execution Interfaces
 
 ### Manager entry points
 
-The planned manager entry points are:
+Implemented:
 
 - executeSwap(tokenIn, tokenOut, amountIn, minAmountOut, deadline)
 - executeDeposit(token, amount, minSharesOut, deadline)
 
-These entry points are not implemented yet.
+Owner and recipient are derived from msg.sender.
+Neither entry point accepts an arbitrary target, recipient or calldata.
 
-### Policy and ownership
+### Policy configuration
 
-- The manager derives the owner from msg.sender.
-- The manager sets the adapter recipient to that owner.
-- The caller cannot supply an arbitrary recipient.
-- The manager resolves adapters from an approved configuration.
-- Adapter approval must be bound to the supported token pair or vault.
-- The prompt cannot introduce arbitrary tokens, adapters, routers or vaults.
-- The MVP exposes no generic target.call(calldata) execution entry point.
+- policyAdmin is the deployer and is immutable.
+- Only policyAdmin can change token support and adapter configuration.
+- Swap adapters are configured per directional token pair.
+- Each input token has one configured vault adapter and share token.
+- Input and output/share tokens must be supported.
+- A zero adapter disables the route.
+- Checking code.length confirms contract code exists, not that it is safe.
+- Production adapters and their router/vault bindings require review.
+- Fee-on-transfer, rebasing and other nonstandard token behavior are
+  outside the supported-token policy.
 
-### Adapter execution
+### Execution and custody
 
-- The manager checks budget, expiry and execution parameters first.
-- The manager decreases budget before external token or adapter calls.
-- The manager pulls and forwards the exact input amount.
-- Adapters receive input tokens before executing their typed operation.
-- Adapter implementations must accept execution only from the manager.
-- Router/vault addresses and supported routes are configured by policy.
-- Adapters must enforce minimum output and deadline.
-- Output tokens or shares must be delivered to the owner.
-- Any required failure must revert the entire transaction.
-- The execution implementation must include reentrancy protection.
+- The manager validates policy, deadline and minimum output.
+- _consumeBudget validates amount, budget expiry and remaining budget.
+- Budget is decreased before external interactions.
+- SafeERC20 pulls input from the owner.
+- Balance checks require the owner to lose and manager to receive
+  exactly the requested input amount.
+- The manager approves only the configured adapter for that amount.
+- The adapter pulls input from the manager.
+- Recipient is fixed to the owner.
+- After execution, adapter allowance is reset to zero and checked.
+- Manager input balance must return to its pre-operation value.
+- Owner input balance must reflect exactly the requested spend.
+- Actual owner output/share balance increase must meet the minimum.
+- Adapter-reported output must equal the observed balance increase.
+- Execution is exact-input: partial consumption reverts.
+- Execution and external configuration/budget mutations use
+  ReentrancyGuard.
+- Required failures revert budget updates, transfers and approvals.
 
-### Current implementation status
+### Time semantics
 
-- ISwapAdapter and IVaultAdapter define function signatures only.
-- Interfaces do not enforce authorization or execution checks.
-- Manager execution and concrete adapters still require implementation.
+- Budget is expired when block.timestamp >= expiry.
+- Execution deadline is expired when block.timestamp > deadline.
+- Budget expiry and execution deadline are separate conditions.
 
-## 11. Draft Status and Handoff
+### Events
 
-### Implemented
+- BudgetSet
+- BudgetRevoked
+- TokenSupportUpdated
+- SwapAdapterUpdated
+- VaultAdapterUpdated
+- SwapExecuted
+- DepositExecuted
 
-- Per-owner, per-token budget storage.
-- setBudget with owner derived from msg.sender.
-- Budget replacement without automatic daily reset.
-- Expiry validation and effective remaining-budget queries.
-- Owner-scoped revocation.
-- BudgetSet and BudgetRevoked events.
-- Typed ISwapAdapter and IVaultAdapter interfaces.
+## 11. Verification and Handoff
 
-### Verified
-28 AllowanceManager tests pass locally: 15 budget-management tests
-and 13 budget-consumption tests. Together with 7 DemoToken tests,
-the contract suite has 35 passing tests.
+### Confirmed local verification
 
-- Unset budgets.
-- Budget creation, replacement and events.
-- Independent budgets across owners and tokens.
-- Invalid token, amount and expiry inputs.
-- Exact expiry boundary and replacement expiry.
-- Revocation, repeated revocation and setting a new budget.
-- Budget management leaves token balances and ERC-20 allowances unchanged.
+- 15 budget-management tests.
+- 13 internal budget-consumption tests.
+- 7 DemoToken tests.
+- 57 execution/security tests passed in a separate security-file run.
+- Complete contract suite passed together: 92 tests.
 
-### Pending Execution Integration
+Execution/security coverage includes:
 
-- executeSwap and executeDeposit are not implemented.
-- Adapter interfaces do not implement actual protocol operations.
-- Spending caps are not yet enforced on swap/deposit transactions.
-- Execution must enforce budget, expiry, supported tokens/adapters,
-  minimum output, deadline and owner-bound recipient.
-- Execution must include reentrancy protection.
-- The internal _consumeBudget function checks and decreases budgets.
-- Its behavior is tested through a local-only harness, including exact
-  cap, over-cap, cumulative spending, expiry, revoke and rollback.
-- executeSwap and executeDeposit must call this function with
-  msg.sender as owner before external interactions.
-- Integration tests must verify those checks in actual execution flows.
-- AllowanceManagerHarness is for local tests only and must not be
-  deployed as the application manager.
+- Successful swap and deposit, including events and owner output.
+- Exact budget cap and rejection one raw unit above it.
+- Caller budget isolation.
+- Disabled tokens and routes.
+- Execution deadline and budget expiry.
+- Revocation and insufficient ERC-20 approval.
+- Minimum output validation.
+- Direct adapter-call rejection.
+- Non-admin policy-update rejection.
+- Downstream revert with atomic rollback.
+- Wrong recipient and incorrect reported output.
+- Rejection of partial input consumption.
+- Preservation of pre-existing manager input balance.
+- False-return transferFrom rejection.
+- Rejection and rollback of the tested fee-on-transfer input token.
+- Reentrant callbacks into execution and budget-management functions.
+- Exact adapter allowance and rejection of an excessive pull.
 
-### Dev 1 Handoff
+### Limits of evidence
 
-- remaining(owner, token) reports the effective app budget.
-- An expired, revoked or unset budget returns zero.
-- setBudget and revoke require a transaction from the owner's wallet.
-- App budget is separate from ERC-20 allowance.
-- The AI/backend cannot spend tokens without an authorized execution flow.
+- Execution tests use local mock adapters.
+- Real router/vault integration has not been verified by these tests.
+- Mock swaps and deposits use a 1:1 raw-unit conversion.
+- The fee-token test covers the specific mock behavior, not all token
+  variants. Rebasing tokens remain excluded by policy.
+- This verification is not an independent security audit.
+- Protection applies only to execution through this manager.
+- The manager has not been deployed or verified on Fuji in this work.
+- Mock contracts and the harness are for local testing only.
 
-### Dev 3 Handoff
+### ABI draft
 
-- The ABI is a draft for budget management.
-- Token amounts use raw integer units.
-- Expiry uses Unix seconds.
-- App revoke does not clear ERC-20 approval.
-- Swap/deposit execution is not available in this draft.
+- Path: contracts/abi/AllowanceManager.json
+- Exported entry count: 38.
+- Includes budget management, policy configuration and execution.
+- ABI entry count alone does not prove ABI freshness or correctness.
+- Export from the compiled artifact after contract changes.
+
+### Dev 1 handoff
+
+- Use typed execution arguments and approved policy configuration.
+- Transactions require the owner's wallet authorization.
+- Budget and ERC-20 allowance are separate requirements.
+- An expired, revoked or unset budget returns zero from remaining.
+- Handle contract reverts; do not promise success before execution.
+- No arbitrary target/call-data execution is exposed.
+
+### Dev 3 handoff
+
+- Use the draft ABI for frontend integration.
+- Amounts and minimum outputs use each token's raw integer units.
+- Expiry and deadline use Unix seconds.
+- Wallet calls establish owner through msg.sender.
+- App revoke does not clear the owner's ERC-20 approval.
+- Contract address and final ABI must be confirmed before live use.

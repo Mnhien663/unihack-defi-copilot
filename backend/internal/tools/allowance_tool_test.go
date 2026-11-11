@@ -232,3 +232,61 @@ func TestNewGetAllowanceToolRejectsNilReader(t *testing.T) {
 		t.Fatal("expected error for nil reader")
 	}
 }
+
+func TestGetAllowanceToolPreservesUnfamiliarSpender(t *testing.T) {
+	const spender = "0x0000000000000000000000000000000000000099"
+
+	client := &allowanceReaderStub{
+		result: avalanche.AllowanceResult{
+			OwnerAddress:   toolAllowanceWallet,
+			SpenderAddress: spender,
+			Allowance: avalanche.TokenAmount{
+				Asset: avalanche.Asset{
+					ChainID:  43113,
+					Address:  toolAllowanceToken,
+					Decimals: 6,
+				},
+				Raw:       "0",
+				Formatted: "0",
+			},
+			Provenance: avalanche.Provenance{
+				Source:     "mock_chain",
+				ChainID:    43113,
+				ObservedAt: time.Now().UTC(),
+				IsDemo:     true,
+			},
+		},
+	}
+
+	tool, err := NewGetAllowanceTool(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := tool.Execute(
+		context.Background(),
+		allowanceToolArguments(t, map[string]any{
+			"spender_address": spender,
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected tool error: %+v", result.Error)
+	}
+
+	if client.calls != 1 || client.spender != spender {
+		t.Fatalf("spender was changed: calls=%d, spender=%s",
+			client.calls, client.spender)
+	}
+
+	var decoded avalanche.AllowanceResult
+	if err := json.Unmarshal(result.Data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SpenderAddress != spender ||
+		decoded.Allowance.Raw != "0" {
+		t.Fatalf("unexpected result: %+v", decoded)
+	}
+}

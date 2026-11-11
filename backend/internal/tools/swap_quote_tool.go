@@ -210,6 +210,15 @@ func (t *GetSwapQuoteTool) Execute(
 		return ai.ToolResult{}, fmt.Errorf("format swap minimum output: %w", err)
 	}
 
+	// Populate the shared DTO as well as the existing tool response alias.
+	quote.MinAmountOut = avalanche.TokenAmount{
+		Asset:     outAsset,
+		Raw:       minOut.String(),
+		Formatted: formatted,
+	}
+	quote.SlippageBps = uint16(slippage)
+	quote.ExpiresAt = expiresAt
+
 	data, err := json.Marshal(struct {
 		avalanche.SwapQuoteResult
 		MinOut      avalanche.TokenAmount `json:"min_out"`

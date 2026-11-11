@@ -55,3 +55,34 @@ These are observations, not a guarantee of node capacity.
 Proceed with a limited local feasibility spike after core work.
 Fuji L1 feasibility remains unconfirmed.
 Do not purchase infrastructure without a team decision.
+
+## EVM and precompile preparation
+
+- Solidity contracts execute EVM bytecode.
+- A native precompile executes logic implemented in the VM.
+- Stateful precompiles can read or modify chain state through the VM's
+  supported state interface.
+- A Solidity interface provides a calling interface; it does not install
+  native precompile code.
+- Developing a new native precompile requires a compatible VM build
+  and chain configuration.
+- Application deployment on Fuji C-Chain does not add a custom native
+  precompile to that shared chain.
+- A separate local L1 is the initial scope for a custom-VM experiment.
+- Local evidence must not be presented as Fuji deployment evidence.
+- Core spending protection currently uses Solidity AllowanceManager.
+- Moving budget logic into a precompile would still require the
+  protected execution flow to invoke and enforce it.
+
+## Source references
+
+- https://build.avax.network/docs/avalanche-l1s/custom-precompiles
+- https://build.avax.network/docs/avalanche-l1s/custom-precompiles/background-requirements
+- https://build.avax.network/docs/avalanche-l1s/evm-configuration/customize-avalanche-l1
+
+## Upstream verification status
+
+The release, commit, Go version and plugin protocol recorded above
+remain candidate metadata until checked against precompile/upstream.lock
+and the selected upstream source. No new build or compatibility
+verification was performed during this preparation step.

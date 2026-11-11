@@ -14,7 +14,179 @@
         "provider": "Sourcify",
         "status": "verified",
         "url": "https://sourcify.dev/server/repo-ui/43113/0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A"
+      }
+    },
+    "DemoVault": {
+      "address": "0x896C05deae3d6e35021B12DD361401736Bb8aAda",
+      "deploymentTransaction": "0xb0dfa16c3b5afdee2589d85b09e305c3ecea78cea2c5c39308137fd382f6d5db",
+      "deployer": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "underlying": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+      "name": "DeFi Copilot Demo Vault Share",
+      "symbol": "dvDDEMO",
+      "demo": true,
+      "status": "deployed",
+      "yieldStrategy": null,
+      "apy": null,
+      "deploymentBlock": 60884688,
+      "decimals": 18
+    },
+    "AllowanceManager": {
+      "address": "0xA7c9881eb43902Ca668bb864668eAA3795f2283B",
+      "deploymentTransaction": "0x2e41c086cdac1318f43e212bdef18fa6be93c8f501ae99e9534eeb01bd9eb28b",
+      "deployer": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "policyAdmin": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "status": "deployed",
+      "configurationStatus": "vault_configured",
+      "deploymentBlock": 60886568,
+      "configurationTransactions": [
+        {
+          "action": "enable_underlying",
+          "hash": "0xe3a99b6f6b338034c660ae8bda598e003840b98f6af2b34453460485b3d3cd91",
+          "status": "confirmed",
+          "blockNumber": 60886849
+        },
+        {
+          "action": "enable_shares",
+          "hash": "0x986aabf54bbbc7747312e60ab07bf9fcc84d156a57d3051de3f0952220252257",
+          "status": "confirmed",
+          "blockNumber": 60886854
+        },
+        {
+          "action": "set_vault_route",
+          "hash": "0x66e85d59b06a2833d501bd22cee4d2b71b6c4a2030687923d056b2bc82b47b97",
+          "status": "confirmed",
+          "blockNumber": 60886860
+        },
+        {
+          "action": "enable_lfj_USDT",
+          "hash": "0x9eb228a80f6fb7d56f606b9fd7a8cdd391caddbcb628ee6ecbc48844d9346f51",
+          "status": "confirmed",
+          "blockNumber": 60892999
+        },
+        {
+          "action": "enable_lfj_USDC",
+          "hash": "0x6b70c92b37af7a789e45471094a7d5673dbb68e23b6f8a92b33f93442e0adf61",
+          "status": "confirmed",
+          "blockNumber": 60893002
+        },
+        {
+          "action": "set_swap_route_0xAb231A5744C8E6c45481754928cCfFFFD4aa0732_0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "hash": "0x0fec7ba5cabc0a852e85ac6560d3cb4db37f3b806a37386919f65305723ec6e0",
+          "status": "confirmed",
+          "blockNumber": 60893004
+        },
+        {
+          "action": "set_swap_route_0xB6076C93701D6a07266c31066B298AeC6dd65c2d_0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "hash": "0xd4cd16da75cefe975e3af83780994731c57f634e46e46ab47110b2e5ceace676",
+          "status": "confirmed",
+          "blockNumber": 60893008
         }
+      ],
+      "vaultRoute": {
+        "token": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+        "adapter": "0x78b5aADB9a8570C7B4387F29119201AF53008b7D",
+        "shareToken": "0x896C05deae3d6e35021B12DD361401736Bb8aAda"
+      },
+      "swapRoutes": [
+        {
+          "tokenIn": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "tokenOut": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "adapter": "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5"
+        },
+        {
+          "tokenIn": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "tokenOut": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "adapter": "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5"
+        }
+      ]
+    },
+    "VaultAdapter": {
+      "address": "0x78b5aADB9a8570C7B4387F29119201AF53008b7D",
+      "deploymentTransaction": "0x4e3dcb7008b4c32b6820fbbdc659439718e42a686de011cce49f1126f8188982",
+      "deployer": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "manager": "0xA7c9881eb43902Ca668bb864668eAA3795f2283B",
+      "vault": "0x896C05deae3d6e35021B12DD361401736Bb8aAda",
+      "underlying": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
+      "demo": true,
+      "status": "deployed",
+      "deploymentBlock": 60886681
+    },
+    "LFJSwapAdapter": {
+      "address": "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5",
+      "deploymentTransaction": "0x48b6753a230ffa2e9aa88e30b81bf55046bafe39673948be0f12bce833526bab",
+      "deployer": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "manager": "0xA7c9881eb43902Ca668bb864668eAA3795f2283B",
+      "router": "0x18556DA13313f3532c54711497A8FedAC273220E",
+      "tokenX": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+      "tokenY": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+      "binStep": 1,
+      "version": "V2.2",
+      "verifiedPair": "0xc3b7307184381f65B398d385a71EF0490239a2b3",
+      "status": "deployed",
+      "configurationStatus": "both_directions_configured",
+      "deploymentBlock": 60892918
+    }
+  },
+  "protocols": {
+    "LFJ": {
+      "version": "V2.2",
+      "router": "0x18556DA13313f3532c54711497A8FedAC273220E",
+      "factory": "0xb43120c4745967fa9b93E79C149E66B0f2D6Fe0c",
+      "quoter": "0x9A550a522BBaDFB69019b0432800Ed17855A51C3",
+      "quoteMethod": "getSwapOut(address,uint128,bool)",
+      "quoteSource": "router",
+      "pairs": [
+        {
+          "address": "0xc3b7307184381f65B398d385a71EF0490239a2b3",
+          "binStep": 1,
+          "tokenX": {
+            "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+            "symbol": "USDT",
+            "decimals": 6
+          },
+          "tokenY": {
+            "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+            "symbol": "USDC",
+            "decimals": 6
+          }
+        }
+      ],
+      "verification": {
+        "blockNumber": 60720761,
+        "observedAt": "2026-11-08T07:33:09.163Z",
+        "routerQuoteBothDirections": true,
+        "quoterRoutingRechecked": false,
+        "swapExecutionVerified": false,
+        "fixture": "backend/internal/avalanche/testdata/quote_fuji_router.json"
+      }
+    },
+    "AaveV3": {
+      "addressesProvider": "0x07D04EfAAA0Ac69D19d107795aF247C42Eb50F1C",
+      "pool": "0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40",
+      "dataProvider": "0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014",
+      "oracle": "0xd36338d0F231446b36008310f1DE0812784ADeBC",
+      "baseCurrency": "0x0000000000000000000000000000000000000000",
+      "baseCurrencyUnitRaw": "100000000",
+      "assets": [
+        {
+          "address": "0x5425890298aed601595a70AB815c96711a31Bc65",
+          "symbol": "USDC",
+          "decimals": 6,
+          "priceSource": "0x97FE42a7E96640D932bbc0e1580c73E705A8EB73",
+          "sourceDecimals": 8
+        }
+      ],
+      "verification": {
+        "blockNumber": 60724294,
+        "observedAt": "2026-11-08T09:23:31.121Z",
+        "accountReadVerified": true,
+        "reserveReadVerified": true,
+        "oracleReadVerified": true,
+        "oracleHeartbeatVerified": false,
+        "borrowedPositionVerified": false,
+        "liquidationModelVerified": false,
+        "fixture": "backend/internal/avalanche/testdata/position_fuji_oracle.json"
+      }
     }
   }
 }

@@ -20,7 +20,7 @@ type dataAPIERC20Balance struct {
 	Address         string `json:"address"`
 	Name            string `json:"name"`
 	Symbol          string `json:"symbol"`
-	Decimals        int    `json:"decimals"`
+	Decimals        *int   `json:"decimals"`
 	LogoURI         string `json:"logoUri"`
 	ERCType         string `json:"ercType"`
 	ChainID         string `json:"chainId"`
@@ -132,6 +132,12 @@ func (c *DataAPIClient) ListTokenBalances(
 		)
 	}
 
+	if len(*decoded.ERC20TokenBalances) > pageSize {
+		return TokenBalancePage{}, fmt.Errorf(
+			"Data API ERC-20 response exceeds requested page size",
+		)
+	}
+
 	balances := make(
 		[]TokenBalance,
 		0,
@@ -158,12 +164,29 @@ func (c *DataAPIClient) ListTokenBalances(
 			)
 		}
 
-		if item.Decimals < 0 || item.Decimals > 255 {
+		if item.Decimals == nil {
 			return TokenBalancePage{}, fmt.Errorf(
-				"ERC-20 balance has invalid decimals",
+				"%w: ERC-20 decimals is missing",
+				ErrTokenMetadataUnavailable,
 			)
 		}
 
+		if *item.Decimals < 0 || *item.Decimals > 255 {
+			return TokenBalancePage{}, fmt.Errorf(
+				"%w: ERC-20 decimals is outside uint8 bounds",
+				ErrTokenMetadataUnavailable,
+			)
+		}
+
+		decimals := uint8(*item.Decimals)
+		if item.Balance == "" ||
+			strings.IndexFunc(item.Balance, func(r rune) bool {
+				return r < '0' || r > '9'
+			}) >= 0 {
+			return TokenBalancePage{}, fmt.Errorf(
+				"ERC-20 balance has invalid raw amount",
+			)
+		}
 		rawAmount, ok := new(big.Int).SetString(
 			item.Balance,
 			10,
@@ -174,9 +197,15 @@ func (c *DataAPIClient) ListTokenBalances(
 			)
 		}
 
+		if rawAmount.BitLen() > 256 {
+			return TokenBalancePage{}, fmt.Errorf(
+				"ERC-20 balance exceeds uint256",
+			)
+		}
+
 		formatted, err := FormatTokenAmount(
 			item.Balance,
-			uint8(item.Decimals),
+			decimals,
 		)
 		if err != nil {
 			return TokenBalancePage{}, fmt.Errorf(
@@ -195,10 +224,8 @@ func (c *DataAPIClient) ListTokenBalances(
 						Address: common.HexToAddress(
 							item.Address,
 						).Hex(),
-						Symbol: item.Symbol,
-						Decimals: uint8(
-							item.Decimals,
-						),
+						Symbol:   item.Symbol,
+						Decimals: decimals,
 					},
 					Raw:       item.Balance,
 					Formatted: formatted,
@@ -217,9 +244,11 @@ func (c *DataAPIClient) ListTokenBalances(
 		),
 		Provenance: Provenance{
 			Source:      "Avalanche Data API",
+			SourceType:  "data_api",
 			ChainID:     uint64(FujiChainID),
 			BlockNumber: nil,
 			ObservedAt:  time.Now().UTC(),
+			Mode:        "live",
 			IsDemo:      false,
 		},
 	}, nil

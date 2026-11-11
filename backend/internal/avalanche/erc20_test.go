@@ -633,3 +633,80 @@ func TestERC20ContextErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestGetERC20BalanceBoundaries(t *testing.T) {
+	maxUint256 := new(big.Int).Sub(
+		new(big.Int).Lsh(big.NewInt(1), 256),
+		big.NewInt(1),
+	)
+
+	tests := []struct {
+		name     string
+		response []byte
+		want     *big.Int
+		wantErr  bool
+	}{
+		{
+			name:     "valid zero balance",
+			response: make([]byte, 32),
+			want:     big.NewInt(0),
+		},
+		{
+			name:     "maximum uint256 balance",
+			response: common.LeftPadBytes(maxUint256.Bytes(), 32),
+			want:     maxUint256,
+		},
+		{
+			name:     "short ABI response",
+			response: make([]byte, 31),
+			wantErr:  true,
+		},
+		{
+			name:     "oversized ABI response",
+			response: make([]byte, 64),
+			wantErr:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &mockContractRPC{
+				call: func(
+					context.Context,
+					ethereum.CallMsg,
+					*big.Int,
+				) ([]byte, error) {
+					return test.response, nil
+				},
+			}
+
+			got, err := GetERC20Balance(
+				context.Background(),
+				client,
+				"0x1111111111111111111111111111111111111111",
+				"0x2222222222222222222222222222222222222222",
+				nil,
+			)
+
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected invalid ABI response error")
+				}
+
+				if got != nil {
+					t.Fatalf("failed read returned a balance: %v", got)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got == nil || got.Cmp(test.want) != 0 {
+				t.Fatalf("balance = %v, want %s", got, test.want)
+			}
+		})
+	}
+}

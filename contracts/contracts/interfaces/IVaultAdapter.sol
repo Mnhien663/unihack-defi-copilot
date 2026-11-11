@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 interface IVaultAdapter {
-    /// @notice Deposits input tokens already forwarded by the manager.
+    /// @notice Pulls approved input tokens from the manager and deposits them.
     /// @dev Implementation must restrict calls to the authorized manager.
     /// @return sharesOut Actual vault shares delivered to recipient.
     function deposit(

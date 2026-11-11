@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -13,6 +14,19 @@ import (
 )
 
 const databasePingTimeout = 5 * time.Second
+
+type connectionError struct {
+	operation string
+	cause     error
+}
+
+func (e *connectionError) Error() string {
+	return e.operation + ": PostgreSQL connection failed"
+}
+
+func (e *connectionError) Unwrap() error {
+	return e.cause
+}
 
 type Config struct {
 	Host     string
@@ -60,7 +74,7 @@ func Connect(ctx context.Context, config Config) (*sql.DB, error) {
 	connectionURL := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(config.User, config.Password),
-		Host:   config.Host + ":" + config.Port,
+		Host:   net.JoinHostPort(config.Host, config.Port),
 		Path:   config.Name,
 	}
 
@@ -70,7 +84,10 @@ func Connect(ctx context.Context, config Config) (*sql.DB, error) {
 
 	db, err := sql.Open("postgres", connectionURL.String())
 	if err != nil {
-		return nil, fmt.Errorf("open PostgreSQL connection: %w", err)
+		return nil, &connectionError{
+			operation: "open database",
+			cause:     err,
+		}
 	}
 
 	db.SetMaxOpenConns(10)
@@ -84,7 +101,10 @@ func Connect(ctx context.Context, config Config) (*sql.DB, error) {
 	if err := db.PingContext(pingCtx); err != nil {
 		db.Close()
 
-		return nil, fmt.Errorf("ping PostgreSQL: %w", err)
+		return nil, &connectionError{
+			operation: "ping database",
+			cause:     err,
+		}
 	}
 
 	return db, nil

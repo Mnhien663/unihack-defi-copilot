@@ -1020,3 +1020,256 @@ func TestDataAPIReadBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestDataAPITransactionPaginationGuards(t *testing.T) {
+	const wallet = "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5"
+
+	tests := []struct {
+		name      string
+		cursor    string
+		body      string
+		wantError string
+		wantCalls int
+	}{
+		{
+			name:      "reject oversized input cursor before HTTP",
+			cursor:    strings.Repeat("x", 2049),
+			body:      `{"transactions":[]}`,
+			wantError: "page token exceeds",
+			wantCalls: 0,
+		},
+		{
+			name: "reject oversized page",
+			body: `{"transactions":[
+				{"nativeTransaction":{
+					"chainId":"43113",
+					"txHash":"test-hash-1",
+					"value":"0"
+				}},
+				{"nativeTransaction":{
+					"chainId":"43113",
+					"txHash":"test-hash-2",
+					"value":"0"
+				}}
+			]}`,
+			wantError: "exceeded requested page size",
+			wantCalls: 1,
+		},
+		{
+			name: "reject oversized output cursor",
+			body: `{"transactions":[],"nextPageToken":"` +
+				strings.Repeat("x", 2049) + `"}`,
+			wantError: "next page token exceeds",
+			wantCalls: 1,
+		},
+		{
+			name:      "reject repeated cursor",
+			cursor:    "same-cursor",
+			body:      `{"transactions":[],"nextPageToken":"same-cursor"}`,
+			wantError: "repeated page token",
+			wantCalls: 1,
+		},
+		{
+			name:      "accept empty final page",
+			body:      `{"transactions":[]}`,
+			wantCalls: 1,
+		},
+		{
+			name:   "accept cursor at length limit unchanged",
+			cursor: strings.Repeat("x", 2048),
+			body: `{"transactions":[],
+				"nextPageToken":"next+/= cursor"}`,
+			wantCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			client := NewDataAPIClient("")
+
+			client.httpClient.Transport = dataAPITestTransport(
+				func(req *http.Request) (*http.Response, error) {
+					calls++
+
+					if got := req.URL.Query().Get("pageToken"); got != tt.cursor {
+						t.Errorf("cursor changed: got %q, want %q", got, tt.cursor)
+					}
+
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(tt.body)),
+						Header:     make(http.Header),
+					}, nil
+				},
+			)
+
+			page, err := client.ListTransactions(
+				context.Background(),
+				wallet,
+				1,
+				tt.cursor,
+			)
+
+			if calls != tt.wantCalls {
+				t.Errorf("HTTP calls = %d; want %d", calls, tt.wantCalls)
+			}
+
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("want error containing %q; got %v", tt.wantError, err)
+				}
+				if page != nil {
+					t.Fatal("expected nil page on error")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if page == nil || page.Transactions == nil {
+				t.Fatal("expected a non-nil page and empty transaction array")
+			}
+
+			var expected DataAPITransactionPage
+			if err := json.Unmarshal([]byte(tt.body), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if page.NextPageToken != expected.NextPageToken {
+				t.Fatal("response cursor was changed")
+			}
+		})
+	}
+}
+
+func TestDataAPIHistoryFromCapturedPages(t *testing.T) {
+	const wallet = "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5"
+
+	files := []string{
+		"testdata/history_data_api_page1.json",
+		"testdata/history_data_api_page2.json",
+	}
+
+	bodies := make([][]byte, len(files))
+	pages := make([]DataAPITransactionPage, len(files))
+
+	for i, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bodies[i] = body
+
+		if err := json.Unmarshal(body, &pages[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	calls := 0
+	client := NewDataAPIClient("")
+	client.httpClient.Transport = dataAPITestTransport(
+		func(req *http.Request) (*http.Response, error) {
+			index := calls
+			calls++
+
+			if index >= len(bodies) {
+				t.Fatal("history requested more than two pages")
+			}
+
+			wantCursor := ""
+			if index > 0 {
+				wantCursor = pages[index-1].NextPageToken
+			}
+			if req.URL.Query().Get("pageToken") != wantCursor {
+				t.Fatal("continuation cursor was changed")
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body: io.NopCloser(
+					strings.NewReader(string(bodies[index])),
+				),
+				Header: make(http.Header),
+			}, nil
+		},
+	)
+
+	result, err := client.ReadTransactionHistory(
+		context.Background(), wallet,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if calls != 2 || len(result.Transactions) != 4 {
+		t.Fatalf("calls=%d, records=%d; want 2 and 4",
+			calls, len(result.Transactions))
+	}
+	if !result.Truncated {
+		t.Fatal("history must be marked truncated while a cursor remains")
+	}
+	if result.NextPageToken != pages[1].NextPageToken {
+		t.Fatal("final continuation cursor was lost")
+	}
+
+	seen := make(map[string]bool)
+	for _, entry := range result.Transactions {
+		tx := entry.NativeTransaction
+		if tx.ChainID != "43113" {
+			t.Fatal("unexpected chain")
+		}
+		if seen[tx.TxHash] {
+			t.Fatalf("duplicate transaction: %s", tx.TxHash)
+		}
+		seen[tx.TxHash] = true
+	}
+
+	last := result.Transactions[3].NativeTransaction
+	if strings.EqualFold(last.From.Address, wallet) ||
+		strings.EqualFold(last.To.Address, wallet) {
+		t.Fatal("fixture no longer covers an indirect ERC-20 transfer")
+	}
+}
+
+func TestDataAPIHistoryRejectsInvalidCursorResponse(t *testing.T) {
+	const wallet = "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5"
+	const cursor = "invalid-cursor+/="
+
+	calls := 0
+	client := NewDataAPIClient("")
+	client.httpClient.Transport = dataAPITestTransport(
+		func(req *http.Request) (*http.Response, error) {
+			calls++
+
+			if got := req.URL.Query().Get("pageToken"); got != cursor {
+				t.Errorf("cursor changed: got %q, want %q", got, cursor)
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Body: io.NopCloser(strings.NewReader(
+					`{"message":"invalid page token"}`,
+				)),
+				Header: make(http.Header),
+			}, nil
+		},
+	)
+
+	page, err := client.ListTransactions(
+		context.Background(),
+		wallet,
+		2,
+		cursor,
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
+		t.Fatalf("expected HTTP 400 error, got %v", err)
+	}
+	if page != nil {
+		t.Fatal("invalid cursor must not become an empty successful page")
+	}
+	if calls != 1 {
+		t.Fatalf("HTTP calls=%d; want 1 without retry", calls)
+	}
+}

@@ -301,6 +301,11 @@ func (c *DataAPIClient) ListTransactions(
 		return nil, fmt.Errorf("page size must be between 1 and 100")
 	}
 
+	// Cursor is opaque: preserve it unchanged.
+	if len(pageToken) > 2048 {
+		return nil, fmt.Errorf("page token exceeds 2048 bytes")
+	}
+
 	address := common.HexToAddress(walletAddress).Hex()
 
 	query := url.Values{}
@@ -356,6 +361,25 @@ func (c *DataAPIClient) ListTransactions(
 
 	if response.Transactions == nil {
 		return nil, fmt.Errorf("Data API response is missing transactions")
+	}
+
+	if len(*response.Transactions) > pageSize {
+		return nil, fmt.Errorf(
+			"Data API transactions exceeded requested page size",
+		)
+	}
+
+	if len(response.NextPageToken) > 2048 {
+		return nil, fmt.Errorf(
+			"Data API next page token exceeds 2048 bytes",
+		)
+	}
+
+	if response.NextPageToken != "" &&
+		response.NextPageToken == pageToken {
+		return nil, fmt.Errorf(
+			"Data API returned repeated page token",
+		)
 	}
 
 	for _, entry := range *response.Transactions {
