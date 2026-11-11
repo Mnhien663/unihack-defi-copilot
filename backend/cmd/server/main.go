@@ -61,6 +61,8 @@ func main() {
 	var transactionSource string
 	var allowanceReader avalanche.AllowanceReader
 	var swapQuoteTool *tools.GetSwapQuoteTool
+	var lendingPositionTool *tools.GetLendingPositionTool
+	var liquidationPriceTool *tools.GetLiquidationPriceTool
 
 	switch dataMode {
 	case "mock":
@@ -126,6 +128,25 @@ func main() {
 			log.Fatalf("Cannot create swap quote tool: %v", err)
 		}
 
+		lendingReader, err := avalanche.NewAavePositionReader(
+			rpcClient,
+			"0x8B9b2AF4afB389b4a70A474dfD4AdCD4a302bb40", // Aave V3 Fuji Pool
+			"0xC65cbd1e309Bf0e841Ee6f6E786480598e6a4014", // Aave V3 Fuji Data Provider
+		)
+		if err != nil {
+			log.Fatalf("Cannot create Aave position reader: %v", err)
+		}
+
+		lendingPositionTool, err = tools.NewGetLendingPositionTool(lendingReader)
+		if err != nil {
+			log.Fatalf("Cannot create lending position tool: %v", err)
+		}
+
+		liquidationPriceTool, err = tools.NewGetLiquidationPriceTool(lendingReader)
+		if err != nil {
+			log.Fatalf("Cannot create liquidation price tool: %v", err)
+		}
+
 	default:
 		log.Fatalf(
 			"Unsupported DATA_MODE %q; expected mock or data_api",
@@ -183,6 +204,20 @@ func main() {
 			log.Fatalf("Cannot register swap quote tool: %v", err)
 		}
 		readToolNames = append(readToolNames, tools.GetSwapQuoteToolName)
+	}
+
+	if lendingPositionTool != nil {
+		if err := registry.Register(lendingPositionTool); err != nil {
+			log.Fatalf("Cannot register lending position tool: %v", err)
+		}
+		readToolNames = append(readToolNames, tools.GetLendingPositionToolName)
+	}
+
+	if liquidationPriceTool != nil {
+		if err := registry.Register(liquidationPriceTool); err != nil {
+			log.Fatalf("Cannot register liquidation price tool: %v", err)
+		}
+		readToolNames = append(readToolNames, tools.GetLiquidationPriceToolName)
 	}
 
 	policies := ai.NewStaticPolicyEngine(readToolNames, nil)

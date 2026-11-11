@@ -126,6 +126,20 @@ func (d *DemoLLMClient) Complete(
 		toolArguments["spender_address"] = spender
 	}
 
+	if toolName == "get_liquidation_price" {
+		target := demoNamedAddress(lastMessage.Content, "target_token_address")
+		if target == "" {
+			return LLMResponse{
+				Message: Message{
+					Role:    RoleAssistant,
+					Content: "Please provide a complete target_token_address.",
+				},
+			}, nil
+		}
+
+		toolArguments["target_token_address"] = target
+	}
+
 	arguments, err := json.Marshal(toolArguments)
 	if err != nil {
 		return LLMResponse{}, fmt.Errorf(
@@ -150,6 +164,14 @@ func (d *DemoLLMClient) Complete(
 
 func selectDemoTool(message string) string {
 	normalized := strings.ToLower(strings.TrimSpace(message))
+
+	if strings.HasPrefix(normalized, "liquidation-test ") {
+		return "get_liquidation_price"
+	}
+
+	if normalized == "lending-test" {
+		return "get_lending_position"
+	}
 
 	if strings.Contains(normalized, "allowance") ||
 		strings.Contains(normalized, "quyền chi tiêu") ||
@@ -239,6 +261,22 @@ func (d *DemoLLMClient) finalResponse(
 	var err error
 
 	switch toolMessage.Name {
+	case "get_liquidation_price":
+		var scenario struct {
+			Status string `json:"scenario_status"`
+		}
+		if err := json.Unmarshal(result.Data, &scenario); err != nil {
+			return LLMResponse{}, fmt.Errorf("decode demo liquidation result: %w", err)
+		}
+
+		if scenario.Status == "no_debt" {
+			content = "This Aave position has no outstanding debt at the source block, " +
+				"so there is no liquidation threshold price. Source: " + result.Source + "."
+		} else {
+			content = "See the tool result for the modeled liquidation scenario, " +
+				"its assumptions, and source block. This is not a forecast."
+		}
+
 	case "get_swap_quote":
 		content = fmt.Sprintf(
 			"Read-only swap quote. Source: %s. "+
@@ -255,6 +293,22 @@ func (d *DemoLLMClient) finalResponse(
 
 	case demoAllowanceToolName:
 		content, err = demoAllowanceResponse(locale, result)
+
+	case "get_lending_position":
+		var snapshot struct {
+			Positions []json.RawMessage `json:"positions"`
+		}
+		if err := json.Unmarshal(result.Data, &snapshot); err != nil {
+			return LLMResponse{}, fmt.Errorf("decode demo lending position: %w", err)
+		}
+
+		content = fmt.Sprintf(
+			"Aave V3 on Avalanche Fuji: %d reserve positions returned. "+
+				"Source: %s, observed at %s. No transaction was submitted.",
+			len(snapshot.Positions),
+			result.Source,
+			formatObservedAt(result.ObservedAt),
+		)
 
 	default:
 		content, err = demoNativeBalanceResponse(locale, result)
