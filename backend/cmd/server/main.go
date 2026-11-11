@@ -63,6 +63,7 @@ func main() {
 	var swapQuoteTool *tools.GetSwapQuoteTool
 	var lendingPositionTool *tools.GetLendingPositionTool
 	var liquidationPriceTool *tools.GetLiquidationPriceTool
+	var vaultMetricsTool *tools.GetVaultMetricsTool
 
 	switch dataMode {
 	case "mock":
@@ -147,6 +148,18 @@ func main() {
 			log.Fatalf("Cannot create liquidation price tool: %v", err)
 		}
 
+		vaultReader, err := avalanche.NewRPCVaultReader(rpcClient)
+		if err != nil {
+			log.Fatalf("Cannot create vault reader: %v", err)
+		}
+
+		const vaultMetricMaxAge = 5 * time.Minute
+
+		vaultMetricsTool, err = tools.NewGetVaultMetricsTool(vaultReader, vaultMetricMaxAge)
+		if err != nil {
+			log.Fatalf("Cannot create vault metrics tool: %v", err)
+		}
+
 	default:
 		log.Fatalf(
 			"Unsupported DATA_MODE %q; expected mock or data_api",
@@ -219,6 +232,16 @@ func main() {
 		}
 		readToolNames = append(readToolNames, tools.GetLiquidationPriceToolName)
 	}
+
+	if vaultMetricsTool != nil {
+		if err := registry.Register(vaultMetricsTool); err != nil {
+			log.Fatalf("Cannot register vault metrics tool: %v", err)
+		}
+		readToolNames = append(readToolNames, tools.GetVaultMetricsToolName)
+	}
+
+	log.Printf("Read tools registered (%d): %s",
+		len(readToolNames), strings.Join(readToolNames, ", "))
 
 	policies := ai.NewStaticPolicyEngine(readToolNames, nil)
 
