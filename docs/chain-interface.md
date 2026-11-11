@@ -1019,3 +1019,200 @@ Product transactions require user wallet review and signing.
 - Backend suite passed after vault reader additions.
 - Deployment and manager route configuration succeeded on Fuji.
 - No live Fuji deposit/redeem through this integration was performed.
+
+## Unsigned swap and simulation handoff — roadmap 2026-11-07
+
+### Implemented components
+
+| File | Purpose |
+|---|---|
+| tx.go | Validate quote and build unsigned manager calldata |
+| tx_requirements.go | Read balances, allowance, budget and route bindings |
+| simulation.go | Simulate execution, estimate gas and report blockers |
+
+Constructors and methods:
+
+- NewSwapTxBuilder()
+  -> BuildSwapTx(request BuildSwapRequest, now time.Time).
+- NewSwapRequirementsReader(client RequirementsRPCClient)
+  -> ReadSwapRequirements(ctx, request).
+- NewSwapSimulator(client SwapSimulationRPC)
+  -> SimulateSwap(ctx, request).
+
+The caller owns the RPC client and must close it.
+These components do not sign or broadcast transactions.
+They are not wired into prepare_swap or main.go yet.
+
+### Quote compatibility
+
+get_swap_quote populates the shared SwapQuoteResult fields:
+min_amount_out, slippage_bps and expires_at.
+
+The existing min_out tool-response alias is retained and must equal
+min_amount_out.
+
+The AI-facing tool applies a 30-second lifetime.
+The builder preserves the supplied expiry and does not extend it.
+The builder accepts a maximum quote lifetime of 60 seconds for
+compatibility with the separate LFJQuoteReader.
+
+### Intent and unsigned transaction
+
+BuildSwapRequest contains:
+owner_address, quote and deadline.
+
+The application must obtain owner_address from validated wallet context
+and retrieve quote from backend-controlled intent/session storage.
+Structural validation does not authenticate client-supplied quotes.
+
+Builder output contains PreparedTransaction and SwapTxSummary.
+
+Transaction envelope:
+- chain_id: 43113.
+- from: intended owner.
+- to: 0xA7c9881eb43902Ca668bb864668eAA3795f2283B.
+- value: decimal string "0".
+- data: executeSwap(tokenIn,tokenOut,amountIn,minAmountOut,deadline).
+
+Recipient is fixed to transaction sender by AllowanceManager.
+There is no caller-selected recipient field in this builder.
+
+The builder:
+- Supports the configured direct LFJ USDT/USDC route only.
+- Checks token identities, decimals, router, pool, version and bin step.
+- Requires positive input/output/minimum within uint128.
+- Checks fee, slippage cap and exact integer-floor minimum.
+- Rejects expired quotes and deadlines beyond quote expiry.
+- Packs calldata and decodes it again for comparison.
+- Recomputes formatted amounts for the summary.
+- Preserves quote provenance; it does not relabel it as fresh simulation.
+
+A built transaction is not proof that requirements are satisfied.
+
+### Requirements
+
+Reads use one selected block number with header checks before/after.
+
+Reported observations:
+- Owner token balance.
+- ERC-20 allowance from owner to manager.
+- Effective budget via remaining(owner, token).
+- Input/output token support.
+- Swap adapter mapping.
+- Configured adapter address and manager/router/token/bin-step bindings.
+- Owner native AVAX balance.
+
+Manager budgets storage is private.
+No budgets() getter or budget expiry getter exists in the deployed ABI.
+
+budget_expiry remains null.
+Positive effective remaining establishes budget_active=true.
+Zero remaining gives budget_active=null because it cannot distinguish
+unset, expired, revoked or exhausted budget.
+
+Blockers include:
+- INPUT_TOKEN_DISABLED
+- OUTPUT_TOKEN_DISABLED
+- SWAP_ROUTE_NOT_CONFIGURED
+- SWAP_ROUTE_NOT_VERIFIED
+- INSUFFICIENT_TOKEN_BALANCE
+- ERC20_APPROVAL_REQUIRED
+- INSUFFICIENT_BUDGET
+- INSUFFICIENT_GAS_BALANCE, added after fee estimation
+
+All applicable blockers are retained.
+RPC errors return Go errors, not zero-value successful requirements.
+The requirements read has a ten-second timeout.
+Quote expiry is revalidated after reading.
+
+### Simulation and fees
+
+SimulateSwap rebuilds calldata from intent; it does not accept arbitrary
+transaction bytes.
+
+- eth_call uses the actual owner as from, manager as to and value=0.
+- eth_call uses the requirements block.
+- EstimateGas uses the node's current state.
+- Gas limit includes a 20% buffer, rounded upward.
+- Estimated fee = buffered gas limit * suggested gas price.
+- Gas affordability compares that estimate with the observed AVAX balance.
+- This is not an EIP-1559 maximum-fee guarantee.
+- Combined simulation/gas provenance does not claim one common block.
+- Requirements retain their own pinned-block provenance.
+- The overall simulation has a twenty-second timeout.
+
+Statuses:
+- blocked: requirements or estimated gas balance are insufficient.
+- reverted: RPC code 3 with hex revert data was recognized.
+- succeeded: eth_call succeeded and estimated gas balance is sufficient.
+
+Timeouts, transport errors and invalid responses remain Go errors.
+Provider errors without recognizable revert metadata are not forced into
+the reverted status.
+
+Recognized manager errors and standard revert reasons are decoded.
+Unrecognized downstream custom errors are reported as UnknownRevert.
+
+A successful simulation does not guarantee inclusion, finality, future
+fees, unchanged liquidity or eventual execution success.
+
+### LFJ execution adapter
+
+Contract: contracts/contracts/adapters/LFJSwapAdapter.sol.
+Interface: contracts/contracts/interfaces/ILFJRouter.sol.
+
+Deployed adapter:
+0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5
+
+Deployment block: 60892918.
+Deployment transaction:
+0x48b6753a230ffa2e9aa88e30b81bf55046bafe39673948be0f12bce833526bab
+
+Bindings:
+- Manager: 0xA7c9881eb43902Ca668bb864668eAA3795f2283B.
+- Router: 0x18556DA13313f3532c54711497A8FedAC273220E.
+- Token X: 0xAb231A5744C8E6c45481754928cCfFFFD4aa0732.
+- Token Y: 0xB6076C93701D6a07266c31066B298AeC6dd65c2d.
+- Version: V2.2; bin step: 1.
+- Both tokens and both manager swap directions are configured.
+- The existing vault route is preserved.
+
+Adapter restricts calls to the manager, grants exact temporary router
+approval, checks actual owner output and full input consumption,
+and clears router allowance.
+
+Adapter fixes router/tokens/version/bin step.
+It does not store an immutable pool address.
+Router resolves the pool through its factory.
+Factory-to-pair mapping matched the quote pair during verification.
+
+ABI:
+- contracts/abi/LFJSwapAdapter.json.
+- backend/internal/avalanche/abi/LFJSwapAdapter.json.
+
+### Fixtures and validation
+
+- swap_unsigned_example.json:
+  synthetic request, unsigned bytes and summary with a fixed reference time.
+  It is not fresh live evidence and must not be used for signing.
+- swap_lfj_route.json:
+  live route/quote observation at block 60892656,
+  observed 2026-11-11T13:12:43.986Z.
+
+Both fixtures are under backend/internal/avalanche/testdata/.
+
+Contract suite: 108 passing, including eight LFJ adapter tests.
+Go builder/requirements/simulation tests use mocks.
+Live Go simulation success and a real manager swap remain unverified.
+
+### Dev 1 integration responsibilities
+
+- Connect prepare_swap to these components.
+- Validate wallet ownership, intent ownership and quote source.
+- Preserve transaction bytes together with their human-readable summary.
+- Show blockers and required approval/budget steps.
+- Revalidate expiry and relevant state at confirmation.
+- Require explicit owner wallet review and signing.
+- Never use a backend deployer key to execute user swaps.
+- Configure wallet gas/fees at signing time; the unsigned DTO does not
+  itself contain gas or EIP-1559 fee fields.

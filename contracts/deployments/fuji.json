@@ -56,13 +56,49 @@
           "hash": "0x66e85d59b06a2833d501bd22cee4d2b71b6c4a2030687923d056b2bc82b47b97",
           "status": "confirmed",
           "blockNumber": 60886860
+        },
+        {
+          "action": "enable_lfj_USDT",
+          "hash": "0x9eb228a80f6fb7d56f606b9fd7a8cdd391caddbcb628ee6ecbc48844d9346f51",
+          "status": "confirmed",
+          "blockNumber": 60892999
+        },
+        {
+          "action": "enable_lfj_USDC",
+          "hash": "0x6b70c92b37af7a789e45471094a7d5673dbb68e23b6f8a92b33f93442e0adf61",
+          "status": "confirmed",
+          "blockNumber": 60893002
+        },
+        {
+          "action": "set_swap_route_0xAb231A5744C8E6c45481754928cCfFFFD4aa0732_0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "hash": "0x0fec7ba5cabc0a852e85ac6560d3cb4db37f3b806a37386919f65305723ec6e0",
+          "status": "confirmed",
+          "blockNumber": 60893004
+        },
+        {
+          "action": "set_swap_route_0xB6076C93701D6a07266c31066B298AeC6dd65c2d_0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "hash": "0xd4cd16da75cefe975e3af83780994731c57f634e46e46ab47110b2e5ceace676",
+          "status": "confirmed",
+          "blockNumber": 60893008
         }
       ],
       "vaultRoute": {
         "token": "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A",
         "adapter": "0x78b5aADB9a8570C7B4387F29119201AF53008b7D",
         "shareToken": "0x896C05deae3d6e35021B12DD361401736Bb8aAda"
-      }
+      },
+      "swapRoutes": [
+        {
+          "tokenIn": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "tokenOut": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "adapter": "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5"
+        },
+        {
+          "tokenIn": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "tokenOut": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "adapter": "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5"
+        }
+      ]
     },
     "VaultAdapter": {
       "address": "0x78b5aADB9a8570C7B4387F29119201AF53008b7D",
@@ -74,6 +110,21 @@
       "demo": true,
       "status": "deployed",
       "deploymentBlock": 60886681
+    },
+    "LFJSwapAdapter": {
+      "address": "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5",
+      "deploymentTransaction": "0x48b6753a230ffa2e9aa88e30b81bf55046bafe39673948be0f12bce833526bab",
+      "deployer": "0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5",
+      "manager": "0xA7c9881eb43902Ca668bb864668eAA3795f2283B",
+      "router": "0x18556DA13313f3532c54711497A8FedAC273220E",
+      "tokenX": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+      "tokenY": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+      "binStep": 1,
+      "version": "V2.2",
+      "verifiedPair": "0xc3b7307184381f65B398d385a71EF0490239a2b3",
+      "status": "deployed",
+      "configurationStatus": "both_directions_configured",
+      "deploymentBlock": 60892918
     }
   },
   "protocols": {

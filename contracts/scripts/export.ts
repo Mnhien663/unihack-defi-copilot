@@ -6,6 +6,7 @@ const contractNames = [
   "AllowanceManager",
   "DemoVault",
   "VaultAdapter",
+  "LFJSwapAdapter",
 ];
 
 const outputDirectory = new URL("../abi/", import.meta.url);

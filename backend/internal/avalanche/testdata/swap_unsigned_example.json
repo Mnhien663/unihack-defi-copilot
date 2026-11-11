@@ -1,0 +1,146 @@
+{
+  "description": "Synthetic unsigned swap example; not live evidence or a transaction ready for signing.",
+  "synthetic": true,
+  "reference_at": "2026-11-11T12:00:00Z",
+  "request": {
+    "owner_address": "0x0000000000000000000000000000000000000001",
+    "quote": {
+      "protocol": "LFJ",
+      "router_address": "0x18556DA13313f3532c54711497A8FedAC273220E",
+      "token_path": [
+        {
+          "chain_id": 43113,
+          "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "symbol": "USDT",
+          "decimals": 6
+        },
+        {
+          "chain_id": 43113,
+          "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "symbol": "USDC",
+          "decimals": 6
+        }
+      ],
+      "hops": [
+        {
+          "pool_address": "0xc3b7307184381f65B398d385a71EF0490239a2b3",
+          "version": "V2.2",
+          "bin_step": 1
+        }
+      ],
+      "amount_in": {
+        "asset": {
+          "chain_id": 43113,
+          "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "symbol": "USDT",
+          "decimals": 6
+        },
+        "raw": "1000000",
+        "formatted": "1"
+      },
+      "amount_out": {
+        "asset": {
+          "chain_id": 43113,
+          "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "symbol": "USDC",
+          "decimals": 6
+        },
+        "raw": "999900",
+        "formatted": "0.9999"
+      },
+      "provenance": {
+        "source": "LFJ V2.2 via Avalanche RPC",
+        "source_type": "rpc",
+        "chain_id": 43113,
+        "block_number": 60886568,
+        "observed_at": "2026-11-11T12:00:00Z",
+        "mode": "live",
+        "is_demo": false
+      },
+      "min_amount_out": {
+        "asset": {
+          "chain_id": 43113,
+          "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "symbol": "USDC",
+          "decimals": 6
+        },
+        "raw": "994900",
+        "formatted": "0.9949"
+      },
+      "fee": {
+        "asset": {
+          "chain_id": 43113,
+          "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "symbol": "USDT",
+          "decimals": 6
+        },
+        "raw": "100",
+        "formatted": "0.0001"
+      },
+      "slippage_bps": 50,
+      "expires_at": "2026-11-11T12:00:30Z"
+    },
+    "deadline": 1794398420
+  },
+  "result": {
+    "prepared": {
+      "action": "swap",
+      "protocol": "LFJ V2.2 via AllowanceManager",
+      "tx": {
+        "chain_id": 43113,
+        "from": "0x0000000000000000000000000000000000000001",
+        "to": "0xA7c9881eb43902Ca668bb864668eAA3795f2283B",
+        "value": "0",
+        "data": "0x76eb8964000000000000000000000000ab231a5744c8e6c45481754928ccffffd4aa0732000000000000000000000000b6076c93701d6a07266c31066b298aec6dd65c2d00000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000000f2e54000000000000000000000000000000000000000000000000000000006af458d4"
+      },
+      "provenance": {
+        "source": "LFJ V2.2 via Avalanche RPC",
+        "source_type": "rpc",
+        "chain_id": 43113,
+        "block_number": 60886568,
+        "observed_at": "2026-11-11T12:00:00Z",
+        "mode": "live",
+        "is_demo": false
+      }
+    },
+    "summary": {
+      "owner_address": "0x0000000000000000000000000000000000000001",
+      "recipient_address": "0x0000000000000000000000000000000000000001",
+      "manager_address": "0xA7c9881eb43902Ca668bb864668eAA3795f2283B",
+      "token_in": {
+        "chain_id": 43113,
+        "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+        "symbol": "USDT",
+        "decimals": 6
+      },
+      "token_out": {
+        "chain_id": 43113,
+        "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      "amount_in": {
+        "asset": {
+          "chain_id": 43113,
+          "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "symbol": "USDT",
+          "decimals": 6
+        },
+        "raw": "1000000",
+        "formatted": "1"
+      },
+      "min_amount_out": {
+        "asset": {
+          "chain_id": 43113,
+          "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "symbol": "USDC",
+          "decimals": 6
+        },
+        "raw": "994900",
+        "formatted": "0.9949"
+      },
+      "deadline": 1794398420,
+      "quote_expires_at": "2026-11-11T12:00:30Z"
+    }
+  }
+}

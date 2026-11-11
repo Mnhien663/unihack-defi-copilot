@@ -144,6 +144,52 @@ func TestGetSwapQuoteToolContract(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// Consumers decoding only the shared DTO must receive complete fields.
+			var shared avalanche.SwapQuoteResult
+			if err := json.Unmarshal(result.Data, &shared); err != nil {
+				t.Fatal(err)
+			}
+
+			if shared.MinAmountOut != data.MinOut {
+				t.Fatalf(
+					"shared minimum differs from tool alias: shared=%+v, alias=%+v",
+					shared.MinAmountOut,
+					data.MinOut,
+				)
+			}
+
+			if shared.MinAmountOut.Raw != tt.wantMin ||
+				shared.MinAmountOut.Asset != out {
+				t.Fatalf("invalid shared minimum: %+v", shared.MinAmountOut)
+			}
+
+			expectedFormatted, err := avalanche.FormatTokenAmount(
+				tt.wantMin, out.Decimals,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if shared.MinAmountOut.Formatted != expectedFormatted {
+				t.Fatalf(
+					"minimum formatted=%q; want %q",
+					shared.MinAmountOut.Formatted,
+					expectedFormatted,
+				)
+			}
+
+			if shared.SlippageBps != uint16(tt.slippage) {
+				t.Fatalf(
+					"shared slippage=%d; want %d",
+					shared.SlippageBps,
+					tt.slippage,
+				)
+			}
+
+			if !shared.ExpiresAt.Equal(data.ExpiresAt) ||
+				!shared.ExpiresAt.Equal(now.Add(30*time.Second)) {
+				t.Fatalf("unexpected shared expiry: %s", shared.ExpiresAt)
+			}
+
 			if data.AmountIn.Raw != tt.raw ||
 				data.AmountIn.Asset != in ||
 				data.AmountOut.Raw != "999900" ||
