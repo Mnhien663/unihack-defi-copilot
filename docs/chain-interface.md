@@ -30,7 +30,7 @@ History response types: backend/internal/avalanche/glacier.go.
 | TokenBalanceReader | ListTokenBalances | Implemented by DataAPIClient; wired to list_token_balances; live ERC-20 request returned HTTP 500 during verification |
 | SwapQuoter | QuoteExactInput | Implemented by LFJQuoteReader for the configured Fuji USDT/USDC pair; not wired into an AI tool or main.go |
 | LendingPositionReader | ReadLendingPosition | DTO/interface defined; adapter pending |
-| VaultPositionReader | ReadVaultPosition | DTO/interface defined; protocol and adapter pending |
+| VaultPositionReader | ReadVaultPosition | Implemented by RPCVaultReader for the configured Fuji DemoVault; not wired into main.go or an AI tool |
 | AllowanceReader | ReadAllowance | Implemented by RPCAllowanceReader; connected through get_allowance |
 | ReceiptReader | ReadReceipt | Implemented by RPCReceiptReader; unit-tested; not wired into a tool or main.go |
 
@@ -892,3 +892,130 @@ multi-asset account or a general liquidation price.
 Keep freshness limitations visible.
 A liquidation threshold calculation is conditional on its model and
 inputs; it is not a forecast of market prices.
+
+## Vault handoff — roadmap 2026-11-06
+
+### Deployed Fuji contracts
+
+| Contract | Address |
+|---|---|
+| DemoToken | 0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A |
+| DemoVault | 0x896C05deae3d6e35021B12DD361401736Bb8aAda |
+| AllowanceManager | 0xA7c9881eb43902Ca668bb864668eAA3795f2283B |
+| VaultAdapter | 0x78b5aADB9a8570C7B4387F29119201AF53008b7D |
+
+Network: Avalanche Fuji, chain ID 43113.
+Deployment transactions and configuration records are in
+contracts/deployments/fuji.json.
+
+Manager policy admin:
+0x4DFb0d91C07A7C706F65F974953cE8b111D27Ee5.
+
+Manager supports DDEMO and vault shares.
+The DDEMO deposit route points to VaultAdapter and DemoVault shares.
+Adapter manager, vault and underlying bindings were checked.
+
+This configures deposit only.
+No LFJ swap execution adapter or swap route was deployed here.
+
+### Go read interfaces
+
+Implementation: backend/internal/avalanche/vault.go.
+Tests: backend/internal/avalanche/vault_test.go.
+
+Constructor: NewRPCVaultReader(client RPCReader).
+
+Supported methods:
+- ReadVault(ctx, VaultReadRequest) returns VaultMetricsResult.
+- ReadVaultPosition(ctx, vaultAddress, walletAddress) returns
+  the existing VaultPositionResult.
+
+VaultReadRequest contains:
+vault_address, wallet_address and deposit_assets_raw.
+
+- Only the configured DemoVault is supported.
+- Wallet must be a valid nonzero address.
+- deposit_assets_raw is a uint256 decimal string.
+- Zero is valid for a read-only preview.
+- Wallet is also the preview deposit receiver.
+- Reads verify Fuji and the expected underlying.
+- Decimals are read separately for underlying and shares.
+- Contract reads use one selected block number.
+- Total read timeout is ten seconds.
+- No block-hash recheck or finality guarantee is implemented here.
+
+Metrics contain wallet position, total assets/shares, deposit input,
+preview shares, maxDeposit, maxWithdraw and maxRedeem.
+
+convertToAssets is not a withdrawal availability guarantee.
+Preview does not establish wallet balance, allowance or execution success.
+Preserve zero-share previews; execution must enforce a positive minimum.
+
+### Valuation and provenance
+
+- Underlying: DDEMO.
+- Shares: dvDDEMO.
+- APY is null: no yield strategy or measured yield history.
+- USD TVL is null: no verified underlying price source.
+- source_type=rpc, mode=live, is_demo=true.
+- Live Fuji access does not make this a non-demo financial product.
+- Go unit tests use mocks; live Go reads remain unverified.
+- Reader is not wired into main.go or an AI tool.
+
+### Deposit execution
+
+User-facing manager method:
+
+executeDeposit(token, amount, minSharesOut, deadline)
+
+- token is DDEMO.
+- amount uses underlying raw units.
+- minSharesOut uses vault share raw units and must be positive.
+- deadline is a Unix timestamp in seconds.
+- The manager fixes share recipient to msg.sender.
+- The user's transaction sender must be the intended owner.
+
+The owner separately needs:
+1. Sufficient underlying balance.
+2. ERC-20 approval granting the manager sufficient allowance.
+3. A sufficient, unexpired manager budget.
+
+Budget does not replace ERC-20 approval.
+Setting a budget does not transfer tokens.
+Redeeming shares does not restore spent manager budget.
+
+The adapter accepts calls only from its configured manager.
+It approves the vault for the exact input and clears approval afterward.
+Both manager and adapter check actual recipient share changes.
+Below-minimum output or downstream failures revert the whole execution.
+
+The current adapter implements deposit only.
+Redeem tests call DemoVault directly; no manager redeem flow exists.
+
+### ABI files
+
+Export script: contracts/scripts/export.ts.
+
+Contract ABIs:
+- contracts/abi/AllowanceManager.json
+- contracts/abi/DemoVault.json
+- contracts/abi/VaultAdapter.json
+
+Backend copies:
+- backend/internal/avalanche/abi/AllowanceManager.json
+- backend/internal/avalanche/abi/DemoVault.json
+- backend/internal/avalanche/abi/VaultAdapter.json
+
+ABI availability does not automatically register AI tools.
+Dev 1 owns tool integration and unsigned transaction preparation.
+Product transactions require user wallet review and signing.
+
+### Validation and limits
+
+- Contract suite: 100 passing.
+- Includes local manager-to-adapter-to-vault deposit,
+  actual minimum shares, donation rounding, redeem ownership,
+  underlying/share allowances and downstream rollback.
+- Backend suite passed after vault reader additions.
+- Deployment and manager route configuration succeeded on Fuji.
+- No live Fuji deposit/redeem through this integration was performed.

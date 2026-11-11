@@ -239,3 +239,57 @@ Read maxWithdraw/maxRedeem separately when reporting availability.
 No vault address is recorded because deployment has not occurred.
 The vault is not yet connected to a Go reader, AI tool or
 AllowanceManager adapter.
+
+## Vault integration design — roadmap 2026-11-06
+
+- Implementation: DemoVault, based on OpenZeppelin ERC4626.
+- Selected underlying: DemoToken (DDEMO) on Avalanche Fuji.
+- Underlying address:
+  0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A.
+- Vault shares: DeFi Copilot Demo Vault Share (dvDDEMO).
+- Deployment remains pending; no vault address is assigned yet.
+
+### Ownership and execution
+
+- AllowanceManager.executeDeposit fixes the share recipient to msg.sender.
+- VaultAdapter must accept calls only from its configured manager.
+- The adapter must validate underlying, deadline and minimum shares.
+- Shares must be deposited directly to the specified recipient.
+- Check actual recipient share balance changes, not preview alone.
+- Temporary approvals must be cleared after successful execution.
+
+### Read semantics
+
+- Read underlying and share decimals separately.
+- previewDeposit estimates shares with rounding; it is not a guarantee.
+- maxDeposit is a vault limit, not wallet balance or allowance.
+- convertToAssets does not establish immediate withdrawal availability.
+- Read maxWithdraw/maxRedeem separately.
+- Donation and rounding behavior require local tests.
+
+### Yield and valuation
+
+- No yield strategy or measured yield history is implemented.
+- APY remains null.
+- No verified DDEMO price source is configured; USD TVL remains null.
+- Label the integration as demo even when using live Fuji RPC.
+
+### Vault deployment update — 2026-11-11
+
+The earlier pending-deployment status is superseded by this update.
+
+- DemoVault: 0x896C05deae3d6e35021B12DD361401736Bb8aAda.
+- Vault deployment block: 60884688.
+- AllowanceManager: 0xA7c9881eb43902Ca668bb864668eAA3795f2283B.
+- Manager deployment block: 60886568.
+- VaultAdapter: 0x78b5aADB9a8570C7B4387F29119201AF53008b7D.
+- Adapter deployment block: 60886681.
+- Underlying and shares enabled; deposit route configured and verified.
+- ABI exported for manager, vault and adapter.
+- Go vault reader implemented and mock-tested.
+- Contract suite: 100 passing, including eight vault integration tests.
+- Dedicated local vault behavior tests are now complete for that scope.
+- No live Fuji deposit/redeem smoke test has been performed.
+- No yield strategy or verified DDEMO price source was added.
+- APY and USD TVL remain unknown.
+- See docs/chain-interface.md and contracts/deployments/fuji.json.

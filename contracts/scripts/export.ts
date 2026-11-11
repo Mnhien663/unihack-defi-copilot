@@ -5,6 +5,7 @@ const contractNames = [
   "DemoToken",
   "AllowanceManager",
   "DemoVault",
+  "VaultAdapter",
 ];
 
 const outputDirectory = new URL("../abi/", import.meta.url);
