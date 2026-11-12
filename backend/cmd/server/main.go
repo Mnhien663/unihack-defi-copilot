@@ -60,7 +60,8 @@ func main() {
 	}
 
 	var prepareSwap ai.SwapPreparationFunc
-
+	var swapRevalidator tools.ReviewedSwapRevalidator
+	var swapReceiptReader avalanche.ReceiptReader
 	var nativeClient tools.ChainClient
 	var tokenClient tools.TokenBalanceClient
 	var transactionClient tools.TransactionClient
@@ -150,6 +151,11 @@ func main() {
 				log.Fatalf("Cannot create swap preparer: %v", err)
 			}
 
+			swapRevalidator = preparer
+			swapReceiptReader, err = avalanche.NewRPCReceiptReader(rpcClient)
+			if err != nil {
+				log.Fatalf("Cannot create swap receipt reader: %v", err)
+			}
 			prepareSwap, err = tools.NewPrepareSwapCallback(preparer)
 			if err != nil {
 				log.Fatalf("Cannot create prepare swap callback: %v", err)
@@ -376,6 +382,64 @@ func main() {
 	)
 
 	app.Post("/api/v1/chat", chatHandler)
+
+	if os.Getenv("ENABLE_SWAP_DECISIONS") == "1" {
+		if prepareSwap == nil || swapRevalidator == nil {
+			log.Fatal("ENABLE_SWAP_DECISIONS=1 requires ENABLE_PREPARE_SWAP=1 and DATA_MODE=data_api")
+		}
+
+		domain := strings.TrimSpace(os.Getenv("SWAP_DECISION_SIGNING_DOMAIN"))
+		if domain == "" {
+			log.Fatal("SWAP_DECISION_SIGNING_DOMAIN is required when swap decisions are enabled")
+		}
+
+		challengeHandler, err := handlers.NewPendingDecisionChallengeHandler(memoryStore, domain)
+		if err != nil {
+			log.Fatalf("Cannot create pending decision challenge handler: %v", err)
+		}
+
+		confirmHandler, err := handlers.NewPendingDecisionHandler(
+			memoryStore, swapRevalidator, domain, "confirm",
+		)
+		if err != nil {
+			log.Fatalf("Cannot create pending decision confirm handler: %v", err)
+		}
+
+		rejectHandler, err := handlers.NewPendingDecisionHandler(
+			memoryStore, nil, domain, "reject",
+		)
+		if err != nil {
+			log.Fatalf("Cannot create pending decision reject handler: %v", err)
+		}
+
+		app.Post("/api/v1/pending-actions/:id/challenge", challengeHandler)
+		app.Post("/api/v1/pending-actions/:id/confirm", confirmHandler)
+		app.Post("/api/v1/pending-actions/:id/reject", rejectHandler)
+
+		if swapReceiptReader == nil {
+			log.Fatal("Swap decisions require a Fuji receipt reader")
+		}
+
+		for _, operation := range []string{"submit-hash", "refresh-receipt"} {
+			challenge, err := handlers.NewPendingSwapReceiptChallengeHandler(
+				memoryStore, domain, operation,
+			)
+			if err != nil {
+				log.Fatalf("Cannot create %s challenge handler: %v", operation, err)
+			}
+
+			handler, err := handlers.NewPendingSwapReceiptHandler(
+				memoryStore, swapReceiptReader, domain, operation,
+			)
+			if err != nil {
+				log.Fatalf("Cannot create %s handler: %v", operation, err)
+			}
+
+			path := "/api/v1/pending-actions/:id/" + operation
+			app.Post(path+"/challenge", challenge)
+			app.Post(path, handler)
+		}
+	}
 
 	// Temporary compatibility route.
 	app.Post("/api/chat", chatHandler)

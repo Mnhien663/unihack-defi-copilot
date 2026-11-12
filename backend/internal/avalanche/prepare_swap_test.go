@@ -208,3 +208,118 @@ func TestSwapPreparerPrepareSwap(t *testing.T) {
 		})
 	}
 }
+
+func TestRevalidateReviewedSwap(t *testing.T) {
+	const wallet = "0x0000000000000000000000000000000000000001"
+	const slippageBps uint16 = 50
+
+	now := time.Date(2026, 11, 11, 15, 0, 0, 0, time.UTC)
+	oldDeadline := uint64(now.Add(10 * time.Second).Unix())
+	freshExpiry := now.Add(30 * time.Second)
+
+	reviewedTx := UnsignedTx{
+		ChainID: uint64(FujiChainID),
+		From:    wallet,
+		To:      "0x0000000000000000000000000000000000000002",
+		Value:   "0",
+		Data:    "0x1234", // Fixture, không phải calldata thật.
+	}
+	summary := SwapTxSummary{
+		OwnerAddress: wallet,
+		TokenIn:      Asset{Address: lfjFujiTokenX},
+		TokenOut:     Asset{Address: lfjFujiTokenY},
+		AmountIn:     TokenAmount{Raw: "1000000"},
+		MinAmountOut: TokenAmount{Raw: "994900"},
+		Deadline:     oldDeadline,
+	}
+
+	for _, tc := range []struct {
+		name           string
+		freshMinOut    string
+		simulatedData  string
+		wantReview     bool
+		wantError      bool
+		wantSimulation int
+	}{
+		{
+			name:        "changed minimum requires review without simulation",
+			freshMinOut: "994800",
+			wantReview:  true,
+		},
+		{
+			name:           "same transaction keeps original deadline",
+			freshMinOut:    "994900",
+			simulatedData:  "0x1234",
+			wantSimulation: 1,
+		},
+		{
+			name:           "different calldata is rejected",
+			freshMinOut:    "994900",
+			simulatedData:  "0x5678",
+			wantError:      true,
+			wantSimulation: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			simCalls := 0
+			quoter := prepareSwapQuoteStub(func(
+				_ context.Context, req SwapQuoteRequest,
+			) (SwapQuoteResult, error) {
+				if req.AmountInRaw != "1000000" ||
+					req.SlippageBps == nil || *req.SlippageBps != slippageBps {
+					t.Fatalf("unexpected re-quote request: %+v", req)
+				}
+				return SwapQuoteResult{
+					TokenPath:    req.TokenPath,
+					AmountIn:     TokenAmount{Raw: req.AmountInRaw},
+					MinAmountOut: TokenAmount{Raw: tc.freshMinOut},
+					SlippageBps:  slippageBps,
+					ExpiresAt:    freshExpiry,
+				}, nil
+			})
+
+			simulator := prepareSwapSimulatorStub(func(
+				_ context.Context, req BuildSwapRequest,
+			) (SwapSimulationResult, error) {
+				simCalls++
+				if req.Deadline != oldDeadline {
+					t.Fatalf("simulation deadline = %d, want original %d",
+						req.Deadline, oldDeadline)
+				}
+				if req.OwnerAddress != wallet || req.Quote.MinAmountOut.Raw != "994900" {
+					t.Fatalf("unexpected simulation request: %+v", req)
+				}
+
+				affordable := true
+				tx := reviewedTx
+				tx.Data = tc.simulatedData
+				return SwapSimulationResult{
+					Status: "succeeded",
+					Requirements: SwapRequirements{
+						GasAffordable: &affordable,
+					},
+					Transaction: BuiltSwapTransaction{
+						Prepared: PreparedTransaction{Tx: tx},
+					},
+				}, nil
+			})
+
+			preparer, err := NewSwapPreparer(quoter, simulator, "10000000")
+			if err != nil {
+				t.Fatal(err)
+			}
+			preparer.now = func() time.Time { return now }
+
+			needsReview, err := preparer.RevalidateReviewedSwap(
+				context.Background(), reviewedTx, summary, slippageBps,
+			)
+			if (err != nil) != tc.wantError || needsReview != tc.wantReview {
+				t.Fatalf("needsReview=%t, err=%v; want needsReview=%t, wantError=%t",
+					needsReview, err, tc.wantReview, tc.wantError)
+			}
+			if simCalls != tc.wantSimulation {
+				t.Fatalf("simulator calls = %d, want %d", simCalls, tc.wantSimulation)
+			}
+		})
+	}
+}
