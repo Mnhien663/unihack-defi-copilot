@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -32,12 +33,13 @@ var (
 )
 
 type AgentInput struct {
-	RequestID     string
-	SessionID     string
-	WalletAddress string
-	ChainID       uint64
-	Message       string
-	Locale        string
+	RequestID      string
+	IdempotencyKey string
+	SessionID      string
+	WalletAddress  string
+	ChainID        uint64
+	Message        string
+	Locale         string
 }
 
 type ToolExecution struct {
@@ -57,6 +59,8 @@ type PendingAction struct {
 	NormalizedIntentHash string          `json:"normalized_intent_hash,omitempty"`
 	ExpiresAt            string          `json:"expires_at,omitempty"`
 	RequiresConfirmation bool            `json:"requires_confirmation"`
+	IdempotencyKey       string          `json:"-"`
+	RequestFingerprint   string          `json:"-"`
 }
 
 type AgentOutput struct {
@@ -66,11 +70,28 @@ type AgentOutput struct {
 	RequiresConfirmation bool            `json:"requires_confirmation"`
 }
 
+const prepareSwapActionName = "prepare_swap"
+
+type SwapPreparation struct {
+	Status    string
+	Blockers  []string
+	Arguments json.RawMessage // Payload chuẩn hóa do backend dựng.
+	ExpiresAt time.Time       // Deadline của giao dịch unsigned.
+}
+
+type SwapPreparationFunc func(
+	ctx context.Context,
+	wallet string,
+	chainID uint64,
+	arguments json.RawMessage,
+) (SwapPreparation, error)
+
 type Agent struct {
-	llm      LLMClient
-	tools    ToolRegistry
-	memory   MemoryStore
-	policies PolicyEngine
+	llm         LLMClient
+	tools       ToolRegistry
+	memory      MemoryStore
+	policies    PolicyEngine
+	prepareSwap SwapPreparationFunc
 }
 
 func pendingActionMessage(locale string) string {
@@ -111,6 +132,28 @@ func NewAgent(
 		memory:   memory,
 		policies: policies,
 	}, nil
+}
+
+func NewAgentWithSwapPreparation(
+	llm LLMClient,
+	tools ToolRegistry,
+	memory MemoryStore,
+	policies PolicyEngine,
+	prepare SwapPreparationFunc,
+) (*Agent, error) {
+	agent, err := NewAgent(llm, tools, memory, policies)
+	if err != nil {
+		return nil, err
+	}
+	if prepare == nil {
+		return nil, fmt.Errorf("swap preparation callback is required")
+	}
+	if _, ok := memory.(TurnRecorder); !ok {
+		return nil, fmt.Errorf("swap preparation requires a pending-action recorder")
+	}
+
+	agent.prepareSwap = prepare
+	return agent, nil
 }
 
 func (a *Agent) persistTurn(
@@ -167,6 +210,39 @@ func (a *Agent) Run(
 				"ensure conversation session: %w",
 				err,
 			)
+		}
+	}
+
+	var swapFingerprint string
+
+	if input.IdempotencyKey != "" && a.prepareSwap != nil {
+		var err error
+		swapFingerprint, err = swapRequestFingerprint(input)
+		if err != nil {
+			return AgentOutput{}, err
+		}
+
+		lookup, ok := a.memory.(PendingSwapLookup)
+		if !ok {
+			return AgentOutput{}, fmt.Errorf("swap preparation requires pending-action lookup")
+		}
+
+		existing, err := lookup.LookupPendingSwap(
+			ctx,
+			input.SessionID,
+			input.IdempotencyKey,
+			swapFingerprint,
+		)
+		if err != nil {
+			return AgentOutput{}, fmt.Errorf("lookup swap retry: %w", err)
+		}
+		if existing != nil {
+			return AgentOutput{
+				Message:              pendingActionMessage(input.Locale),
+				ToolExecutions:       []ToolExecution{},
+				PendingAction:        existing,
+				RequiresConfirmation: true,
+			}, nil
 		}
 	}
 
@@ -364,14 +440,83 @@ func (a *Agent) Run(
 			call := response.ToolCalls[0]
 			pendingMessage := pendingActionMessage(input.Locale)
 
+			pendingArguments := call.Arguments
+			pendingExpiry := ""
+
+			if call.Name == prepareSwapActionName {
+				if a.prepareSwap == nil {
+					return AgentOutput{}, fmt.Errorf("swap preparation is not enabled")
+				}
+
+				if swapFingerprint == "" {
+					return AgentOutput{}, ErrInvalidIdempotencyKey
+				}
+
+				prepared, err := a.prepareSwap(
+					ctx, input.WalletAddress, input.ChainID, call.Arguments,
+				)
+				if err != nil {
+					return AgentOutput{}, fmt.Errorf("prepare swap: %w", err)
+				}
+
+				switch prepared.Status {
+				case "approval_required", "blocked", "reverted":
+					switch prepared.Status {
+					case "approval_required":
+						pendingMessage = "Swap not prepared. A separate ERC-20 approval for the AllowanceManager is required."
+					case "blocked":
+						pendingMessage = "Swap not prepared. Requirements not met: " +
+							strings.Join(prepared.Blockers, ", ") + "."
+					case "reverted":
+						pendingMessage = "Swap not prepared. The simulation reverted."
+					}
+
+					assistantMessage := Message{
+						RequestID: input.RequestID,
+						Role:      RoleAssistant,
+						Content:   pendingMessage,
+					}
+					if err := a.persistTurn(ctx, TurnRecord{
+						SessionID: input.SessionID,
+						Message:   assistantMessage,
+					}); err != nil {
+						return AgentOutput{}, fmt.Errorf("persist blocked swap response: %w", err)
+					}
+					return AgentOutput{
+						Message:        pendingMessage,
+						ToolExecutions: []ToolExecution{},
+					}, nil
+
+				case "ready_for_review":
+					payload := strings.TrimSpace(string(prepared.Arguments))
+					if !strings.HasPrefix(payload, "{") ||
+						!json.Valid(prepared.Arguments) ||
+						!prepared.ExpiresAt.After(time.Now()) {
+						return AgentOutput{}, fmt.Errorf("invalid or expired prepared swap")
+					}
+
+					pendingArguments = prepared.Arguments
+					pendingExpiry = prepared.ExpiresAt.UTC().Format(time.RFC3339Nano)
+
+				default:
+					return AgentOutput{}, fmt.Errorf("unexpected swap preparation status")
+				}
+			}
+
 			pendingAction := &PendingAction{
 				RequestID:            input.RequestID,
 				ToolCallID:           call.ID,
 				ToolName:             call.Name,
-				Arguments:            call.Arguments,
+				Arguments:            pendingArguments,
+				ExpiresAt:            pendingExpiry,
 				ChainID:              input.ChainID,
 				WalletAddress:        input.WalletAddress,
 				RequiresConfirmation: true,
+			}
+
+			if call.Name == prepareSwapActionName {
+				pendingAction.IdempotencyKey = input.IdempotencyKey
+				pendingAction.RequestFingerprint = swapFingerprint
 			}
 
 			assistantMessage := Message{

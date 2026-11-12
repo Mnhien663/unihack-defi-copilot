@@ -294,3 +294,94 @@ func TestInjectedChatHandlerReturnsPendingAction(t *testing.T) {
 		)
 	}
 }
+
+func TestChatHandlerMapsIdempotencyErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		key        string
+		agentErr   error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "invalid key",
+			key:        "invalid key",
+			agentErr:   ai.ErrInvalidIdempotencyKey,
+			wantStatus: fiber.StatusBadRequest,
+			wantCode:   "INVALID_IDEMPOTENCY_KEY",
+		},
+		{
+			name:       "same key different request",
+			key:        "swap-test-key",
+			agentErr:   ai.ErrSwapIdempotencyConflict,
+			wantStatus: fiber.StatusConflict,
+			wantCode:   "IDEMPOTENCY_KEY_CONFLICT",
+		},
+		{
+			name:       "pending swap unavailable",
+			key:        "swap-test-key",
+			agentErr:   ai.ErrSwapPendingUnavailable,
+			wantStatus: fiber.StatusConflict,
+			wantCode:   "PENDING_SWAP_UNAVAILABLE",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &mockChatRunner{err: tc.agentErr}
+
+			handler, err := NewChatHandler(runner)
+			if err != nil {
+				t.Fatalf("NewChatHandler() returned error: %v", err)
+			}
+
+			app := fiber.New()
+			app.Use(requestid.New())
+			app.Post("/api/v1/chat", handler)
+
+			request := httptest.NewRequest(
+				fiber.MethodPost,
+				"/api/v1/chat",
+				strings.NewReader(`{
+                    "session_id": "swap-test-session",
+                    "wallet_address": "0x0000000000000000000000000000000000000001",
+                    "chain_id": 43113,
+                    "message": "Prepare a swap on Avalanche Fuji",
+                    "locale": "en"
+                }`),
+			)
+			request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+			request.Header.Set("Idempotency-Key", tc.key)
+
+			response, err := app.Test(request)
+			if err != nil {
+				t.Fatalf("app.Test() returned error: %v", err)
+			}
+			defer response.Body.Close()
+
+			var body ChatResponse
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatalf("could not decode response: %v", err)
+			}
+
+			if response.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d", response.StatusCode, tc.wantStatus)
+			}
+			if body.Error == nil {
+				t.Fatal("expected a structured error response")
+			}
+			if body.Error.Code != tc.wantCode {
+				t.Errorf("error.code = %q, want %q", body.Error.Code, tc.wantCode)
+			}
+			if body.PendingAction != nil {
+				t.Error("error response must not include a pending action")
+			}
+			if runner.receivedCall != 1 {
+				t.Errorf("runner call count = %d, want 1", runner.receivedCall)
+			}
+			if runner.received.IdempotencyKey != tc.key {
+				t.Errorf("agent received key %q, want %q", runner.received.IdempotencyKey, tc.key)
+			}
+		})
+	}
+}

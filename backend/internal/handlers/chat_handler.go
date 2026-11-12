@@ -174,12 +174,13 @@ func handleChat(
 	output, err := runner.Run(
 		c.UserContext(),
 		ai.AgentInput{
-			RequestID:     getRequestID(c),
-			SessionID:     req.SessionID,
-			WalletAddress: req.WalletAddress,
-			ChainID:       uint64(req.ChainID),
-			Message:       req.Message,
-			Locale:        req.Locale,
+			RequestID:      getRequestID(c),
+			IdempotencyKey: c.Get("Idempotency-Key"),
+			SessionID:      req.SessionID,
+			WalletAddress:  req.WalletAddress,
+			ChainID:        uint64(req.ChainID),
+			Message:        req.Message,
+			Locale:         req.Locale,
 		},
 	)
 	if err != nil {
@@ -199,7 +200,29 @@ func handleChat(
 				"TOOL_POLICY_DENIED",
 				"the requested tool is not allowed",
 			)
+		case errors.Is(err, ai.ErrInvalidIdempotencyKey):
+			return sendError(
+				c,
+				fiber.StatusBadRequest,
+				"INVALID_IDEMPOTENCY_KEY",
+				"Idempotency-Key must be 1 to 128 characters using only letters, digits, hyphens, or underscores",
+			)
 
+		case errors.Is(err, ai.ErrSwapIdempotencyConflict):
+			return sendError(
+				c,
+				fiber.StatusConflict,
+				"IDEMPOTENCY_KEY_CONFLICT",
+				"this Idempotency-Key was already used for a different request in this session",
+			)
+
+		case errors.Is(err, ai.ErrSwapPendingUnavailable):
+			return sendError(
+				c,
+				fiber.StatusConflict,
+				"PENDING_SWAP_UNAVAILABLE",
+				"the swap action associated with this Idempotency-Key is no longer pending or has expired",
+			)
 		default:
 			return sendError(
 				c,

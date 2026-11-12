@@ -54,6 +54,12 @@ func main() {
 	if dataMode == "" {
 		dataMode = defaultDataMode
 	}
+	prepareSwapEnabled := os.Getenv("ENABLE_PREPARE_SWAP") == "1"
+	if prepareSwapEnabled && dataMode != "data_api" {
+		log.Fatal("ENABLE_PREPARE_SWAP=1 requires DATA_MODE=data_api")
+	}
+
+	var prepareSwap ai.SwapPreparationFunc
 
 	var nativeClient tools.ChainClient
 	var tokenClient tools.TokenBalanceClient
@@ -127,6 +133,27 @@ func main() {
 		swapQuoteTool, err = tools.NewGetSwapQuoteTool(quoter, quoteConfig)
 		if err != nil {
 			log.Fatalf("Cannot create swap quote tool: %v", err)
+		}
+
+		if prepareSwapEnabled {
+			simulator, err := avalanche.NewSwapSimulator(rpcClient)
+			if err != nil {
+				log.Fatalf("Cannot create swap simulator: %v", err)
+			}
+
+			preparer, err := avalanche.NewSwapPreparer(
+				quoter,
+				simulator,
+				strings.TrimSpace(os.Getenv("PREPARE_SWAP_MAX_AMOUNT_RAW")),
+			)
+			if err != nil {
+				log.Fatalf("Cannot create swap preparer: %v", err)
+			}
+
+			prepareSwap, err = tools.NewPrepareSwapCallback(preparer)
+			if err != nil {
+				log.Fatalf("Cannot create prepare swap callback: %v", err)
+			}
 		}
 
 		lendingReader, err := avalanche.NewAaveLendingReader(
@@ -243,7 +270,15 @@ func main() {
 	log.Printf("Read tools registered (%d): %s",
 		len(readToolNames), strings.Join(readToolNames, ", "))
 
-	policies := ai.NewStaticPolicyEngine(readToolNames, nil)
+	var writeToolNames []string
+	if prepareSwap != nil {
+		if err := registry.Register(tools.PrepareSwapProposal{}); err != nil {
+			log.Fatalf("Cannot register prepare swap proposal: %v", err)
+		}
+		writeToolNames = append(writeToolNames, tools.PrepareSwapToolName)
+	}
+
+	policies := ai.NewStaticPolicyEngine(readToolNames, writeToolNames)
 
 	provider := strings.ToLower(
 		strings.TrimSpace(os.Getenv("AI_PROVIDER")),
@@ -290,12 +325,23 @@ func main() {
 		)
 	}
 
-	agent, err := ai.NewAgent(
-		llmClient,
-		registry,
-		memoryStore,
-		policies,
-	)
+	var agent *ai.Agent
+	if prepareSwap != nil {
+		agent, err = ai.NewAgentWithSwapPreparation(
+			llmClient,
+			registry,
+			memoryStore,
+			policies,
+			prepareSwap,
+		)
+	} else {
+		agent, err = ai.NewAgent(
+			llmClient,
+			registry,
+			memoryStore,
+			policies,
+		)
+	}
 	if err != nil {
 		log.Fatalf("Cannot create AI agent: %v", err)
 	}
