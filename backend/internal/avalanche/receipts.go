@@ -1,6 +1,7 @@
 package avalanche
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -223,6 +224,57 @@ func (r *RPCReceiptReader) ReadReceipt(
 
 	result.Provenance.ObservedAt = time.Now().UTC()
 	return result, nil
+}
+
+// VerifyReviewedSwapTransaction compares the transaction returned by RPC
+// with the unsigned transaction stored at confirmation time.
+// It does not determine whether the transaction was mined successfully.
+func VerifyReviewedSwapTransaction(
+	requestedHash string,
+	reviewed UnsignedTx,
+	observed ReceiptResult,
+) error {
+	wantHash, err := hexutil.Decode(requestedHash)
+	if err != nil || len(wantHash) != common.HashLength {
+		return errors.New("invalid requested transaction hash")
+	}
+	gotHash, err := hexutil.Decode(observed.TransactionHash)
+	if err != nil || !bytes.Equal(gotHash, wantHash) {
+		return errors.New("RPC transaction hash does not match requested hash")
+	}
+
+	if reviewed.ChainID != uint64(FujiChainID) ||
+		observed.ChainID != reviewed.ChainID {
+		return errors.New("transaction chain does not match reviewed swap")
+	}
+
+	if !common.IsHexAddress(reviewed.From) ||
+		!common.IsHexAddress(observed.FromAddress) ||
+		common.HexToAddress(observed.FromAddress) != common.HexToAddress(reviewed.From) {
+		return errors.New("transaction sender does not match reviewed swap")
+	}
+	if observed.ToAddress == nil ||
+		!common.IsHexAddress(reviewed.To) ||
+		!common.IsHexAddress(*observed.ToAddress) ||
+		common.HexToAddress(*observed.ToAddress) != common.HexToAddress(reviewed.To) {
+		return errors.New("transaction destination does not match reviewed swap")
+	}
+
+	// AllowanceManager swaps in this flow send no native value.
+	if reviewed.Value != "0" || observed.ValueRaw != reviewed.Value {
+		return errors.New("transaction value does not match reviewed swap")
+	}
+
+	wantData, err := hexutil.Decode(reviewed.Data)
+	if err != nil || len(wantData) < 4 {
+		return errors.New("invalid reviewed swap calldata")
+	}
+	gotData, err := hexutil.Decode(observed.Input)
+	if err != nil || !bytes.Equal(gotData, wantData) {
+		return errors.New("transaction calldata does not match reviewed swap")
+	}
+
+	return nil
 }
 
 var _ ReceiptReader = (*RPCReceiptReader)(nil)

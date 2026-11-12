@@ -32,6 +32,7 @@ type PrepareSwapResult struct {
 	Blockers     []string              `json:"blockers"`
 	Requirements SwapRequirements      `json:"requirements"`
 	Transaction  *BuiltSwapTransaction `json:"transaction,omitempty"`
+	SlippageBps  uint16                `json:"slippage_bps"`
 }
 
 type SwapPreparer struct {
@@ -188,10 +189,103 @@ func (p *SwapPreparer) PrepareSwap(
 		}
 		result.Status = "ready_for_review"
 		result.Transaction = &simulation.Transaction
+		result.Status = "ready_for_review"
+		result.Transaction = &simulation.Transaction
+		result.SlippageBps = quote.SlippageBps
 		return result, nil
 	default:
 		return PrepareSwapResult{}, errors.New("unknown swap simulation status")
 	}
+}
+
+// RevalidateReviewedSwap re-quotes and simulates the exact unsigned
+// transaction shown in the modal. It does not confirm or update the action.
+func (p *SwapPreparer) RevalidateReviewedSwap(
+	ctx context.Context,
+	reviewedTx UnsignedTx,
+	summary SwapTxSummary,
+	slippageBps uint16,
+) (needsReview bool, err error) {
+	if slippageBps > maxQuoteSlippageBps {
+		return false, errors.New("stored swap slippage exceeds application cap")
+	}
+
+	in, err := prepareSwapAsset(summary.TokenIn.Address)
+	if err != nil {
+		return false, err
+	}
+	out, err := prepareSwapAsset(summary.TokenOut.Address)
+	if err != nil {
+		return false, err
+	}
+	if in.Address == out.Address {
+		return false, ErrUnsupportedSwapRoute
+	}
+
+	amount, err := lfjQuoteInput(summary.AmountIn.Raw)
+	if err != nil {
+		return false, err
+	}
+	if amount.Cmp(p.maxAmount) > 0 {
+		return false, errors.New("stored swap amount exceeds application cap")
+	}
+
+	quote, err := p.quoter.QuoteExactInput(ctx, SwapQuoteRequest{
+		TokenPath:   []Asset{in, out},
+		AmountInRaw: amount.String(),
+		SlippageBps: &slippageBps,
+	})
+	if err != nil {
+		return false, fmt.Errorf("re-quote reviewed swap: %w", err)
+	}
+
+	if len(quote.TokenPath) != 2 ||
+		!common.IsHexAddress(quote.TokenPath[0].Address) ||
+		!common.IsHexAddress(quote.TokenPath[1].Address) ||
+		common.HexToAddress(quote.TokenPath[0].Address) != common.HexToAddress(in.Address) ||
+		common.HexToAddress(quote.TokenPath[1].Address) != common.HexToAddress(out.Address) ||
+		quote.AmountIn.Raw != amount.String() ||
+		quote.SlippageBps != slippageBps {
+		return false, errors.New("fresh quote does not match reviewed swap intent")
+	}
+
+	now := p.now().UTC()
+	if err := ValidateQuoteExpiry(quote, now); err != nil {
+		return false, err
+	}
+	if quote.MinAmountOut.Raw != summary.MinAmountOut.Raw ||
+		now.Unix() < 0 ||
+		summary.Deadline <= uint64(now.Unix()) ||
+		quote.ExpiresAt.Unix() < 0 ||
+		summary.Deadline > uint64(quote.ExpiresAt.Unix()) {
+		return true, nil
+	}
+
+	simulation, err := p.simulator.SimulateSwap(ctx, BuildSwapRequest{
+		OwnerAddress: summary.OwnerAddress,
+		Quote:        quote,
+		Deadline:     summary.Deadline,
+	})
+	if err != nil {
+		return false, fmt.Errorf("re-simulate reviewed swap: %w", err)
+	}
+	if simulation.Status != "succeeded" ||
+		len(simulation.Requirements.Blockers) != 0 ||
+		simulation.Requirements.GasAffordable == nil ||
+		!*simulation.Requirements.GasAffordable {
+		return false, errors.New("reviewed swap is no longer executable")
+	}
+
+	got := simulation.Transaction.Prepared.Tx
+	if got.ChainID != reviewedTx.ChainID ||
+		got.From != reviewedTx.From ||
+		got.To != reviewedTx.To ||
+		got.Value != reviewedTx.Value ||
+		got.Data != reviewedTx.Data {
+		return false, errors.New("simulated transaction does not match reviewed transaction")
+	}
+
+	return false, nil
 }
 
 func prepareSwapAsset(value string) (Asset, error) {
