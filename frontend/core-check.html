@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Kiểm tra ví Fuji</title>
+</head>
+<body>
+  <h2>Kiểm tra kết nối ví</h2>
+  <p>Fuji testnet. Giao dịch chỉ được gửi khi bạn bấm xác nhận và ký trong Core.</p>
+
+  <select id="wallets">
+    <option value="">Chọn ví Core</option>
+  </select>
+  <button id="connect">Kết nối và kiểm tra</button>
+  <button id="simulate">Mô phỏng lấy LFJ USDT</button>
+  <button id="send-funding" disabled>
+    <button id="approve-usdt">Approve 0.01 USDT cho Manager</button>
+  Xác nhận đổi 0.001 AVAX lấy USDT
+</button>
+  <button id="set-budget">Đặt budget 0.01 USDT / 1 giờ</button>
+  <button id="simulate-manager-swap">
+  Mô phỏng swap 0.01 USDT → USDC
+</button>
+  <button id="send-manager-swap">Xác nhận và ký swap qua Manager</button>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import {
+        encodeFunctionData,
+        decodeFunctionResult,
+        parseAbi,
+        formatUnits,
+    } from "viem";
+    const wallets = new Map();
+    const select = document.querySelector("#wallets");
+    const output = document.querySelector("#output");
+    const button = document.querySelector("#connect");
+
+    const expectedAccount =
+      "0x37E146a4141C8fd82f0c8c5Bb8035930fD0ea588";
+
+    function addWallet(id, name, provider) {
+      if (!provider?.request || wallets.has(id)) return;
+
+      wallets.set(id, provider);
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = name;
+      select.append(option);
+    }
+
+    window.addEventListener("eip6963:announceProvider", (event) => {
+      const { info, provider } = event.detail;
+      addWallet(info.uuid, info.name, provider);
+    });
+
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+    // Compatibility fallback for Core's injected provider.
+    if (window.avalanche?.request) {
+      addWallet("core-injected", "Core (injected)", window.avalanche);
+    }
+
+    let fundingCandidate = null;
+let fundingSubmitted = false;
+const sendFundingButton = document.querySelector("#send-funding");
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      output.textContent = "";
+
+      try {
+        const provider = wallets.get(select.value);
+        if (!provider) {
+          throw new Error(
+            "Chưa chọn ví. Hãy chọn Core trong danh sách."
+          );
+        }
+
+        const accounts = await provider.request({
+          method: "eth_requestAccounts",
+        });
+
+        const chainHex = await provider.request({
+          method: "eth_chainId",
+        });
+
+        const account = accounts[0];
+        if (!account) throw new Error("Ví chưa cấp quyền account.");
+
+        const chainId = BigInt(chainHex);
+        const accountMatches =
+          account.toLowerCase() === expectedAccount.toLowerCase();
+
+        output.textContent = [
+          `Account: ${account}`,
+          `Đúng ví dự kiến: ${accountMatches}`,
+          `Chain ID: ${chainId}`,
+          `Đúng Fuji 43113: ${chainId === 43113n}`,
+          "",
+          "Không có giao dịch nào được yêu cầu ký.",
+        ].join("\n");
+      } catch (error) {
+        output.textContent = error.message ?? String(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    const fundingRouter =
+  "0xb4315e873dBcf96Ffd0acd8EA43f689D8c20fB30";
+const fundingPair =
+  "0x868999c5Bb39029d86445e09575Ec71D4D187962";
+const wrappedAVAX =
+  "0xd00ae08403B9bbb9124bB305C09058E32C39A48c";
+const usdt =
+  "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732";
+
+const fundingABI = parseAbi([
+  "function getSwapOut(address pair,uint128 amountIn,bool swapForY) view returns (uint128 amountInLeft,uint128 amountOut,uint128 fee)",
+  "function swapExactNATIVEForTokens(uint256 amountOutMin,(uint256[] pairBinSteps,uint8[] versions,address[] tokenPath) path,address to,uint256 deadline) payable returns (uint256 amountOut)",
+]);
+
+const pairABI = parseAbi([
+  "function getTokenY() view returns (address)",
+]);
+
+document.querySelector("#simulate").addEventListener("click", async () => {
+  const simulateButton = document.querySelector("#simulate");
+  simulateButton.disabled = true;
+  fundingCandidate = null;
+sendFundingButton.disabled = true;
+
+  try {
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy chọn và kết nối Core trước.");
+
+    const accounts = await provider.request({ method: "eth_accounts" });
+    const account = accounts[0];
+    const chain = await provider.request({ method: "eth_chainId" });
+
+    if (BigInt(chain) !== 43113n) {
+      throw new Error("Ví phải ở Fuji 43113.");
+    }
+    if (account?.toLowerCase() !== expectedAccount.toLowerCase()) {
+      throw new Error("Account hiện tại khác ví Core dự kiến.");
+    }
+
+    const block = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!block) throw new Error("Không đọc được block.");
+
+    async function read(to, abi, functionName, args = []) {
+      const data = encodeFunctionData({
+        abi, functionName, args,
+      });
+
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [{ to, data }, block.number],
+      });
+
+      return decodeFunctionResult({
+        abi, functionName, data: raw,
+      });
+    }
+
+    const tokenY = await read(
+      fundingPair, pairABI, "getTokenY"
+    );
+    const swapForY = tokenY.toLowerCase() === usdt.toLowerCase();
+    const value = 1_000_000_000_000_000n; // 0.001 AVAX
+
+    const [left, quotedOut] = await read(
+      fundingRouter,
+      fundingABI,
+      "getSwapOut",
+      [fundingPair, value, swapForY]
+    );
+
+    if (left !== 0n || quotedOut === 0n) {
+      throw new Error("Pool không đổi hết đầu vào hoặc không có đầu ra.");
+    }
+
+    const minimum = quotedOut * 9900n / 10000n;
+    if (minimum < 10000n) {
+      throw new Error("Đầu ra tối thiểu chưa đủ 0.01 USDT để test.");
+    }
+
+    const deadline = BigInt(block.timestamp) + 600n;
+    const data = encodeFunctionData({
+      abi: fundingABI,
+      functionName: "swapExactNATIVEForTokens",
+      args: [
+        minimum,
+        {
+          pairBinSteps: [15n],
+          versions: [2],
+          tokenPath: [wrappedAVAX, usdt],
+        },
+        account,
+        deadline,
+      ],
+    });
+
+    const raw = await provider.request({
+      method: "eth_call",
+      params: [{
+        from: account,
+        to: fundingRouter,
+        value: "0x" + value.toString(16),
+        data,
+      }, block.number],
+    });
+
+    const simulatedOut = decodeFunctionResult({
+      abi: fundingABI,
+      functionName: "swapExactNATIVEForTokens",
+      data: raw,
+    });
+
+    if (simulatedOut < minimum) {
+      throw new Error("Simulation trả đầu ra thấp hơn minimum.");
+    }
+
+    if (!fundingSubmitted) {
+  fundingCandidate = {
+    provider,
+    account,
+    data,
+    value: "0x" + value.toString(16),
+    minimum,
+    deadline,
+    createdAt: Date.now(),
+  };
+  sendFundingButton.disabled = false;
+}
+
+    output.textContent = [
+      "Simulation thành công — CHƯA gửi giao dịch.",
+      `Account: ${account}`,
+      "Chain: 43113",
+      `Block: ${BigInt(block.number)}`,
+      `Router: ${fundingRouter}`,
+      "Chi: 0.001 AVAX testnet",
+      `Quote: ${formatUnits(quotedOut, 6)} LFJ USDT`,
+      `Minimum: ${formatUnits(minimum, 6)} LFJ USDT`,
+      `Simulation output: ${formatUnits(simulatedOut, 6)} LFJ USDT`,
+      `Deadline: ${deadline}`,
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+  } finally {
+    simulateButton.disabled = false;
+  }
+});
+
+sendFundingButton.addEventListener("click", async () => {
+  sendFundingButton.disabled = true;
+  const candidate = fundingCandidate;
+  fundingCandidate = null;
+
+  try {
+    if (!candidate || fundingSubmitted) {
+      throw new Error("Hãy mô phỏng lại trước khi gửi.");
+    }
+
+    if (Date.now() - candidate.createdAt > 60_000) {
+      throw new Error("Simulation đã quá 60 giây. Hãy mô phỏng lại.");
+    }
+
+    const provider = wallets.get(select.value);
+    if (provider !== candidate.provider) {
+      throw new Error("Ví được chọn đã thay đổi. Hãy mô phỏng lại.");
+    }
+
+    const accounts = await provider.request({ method: "eth_accounts" });
+    const chain = await provider.request({ method: "eth_chainId" });
+
+    if (
+      BigInt(chain) !== 43113n ||
+      accounts[0]?.toLowerCase() !== candidate.account.toLowerCase()
+    ) {
+      throw new Error("Account hoặc chain đã thay đổi.");
+    }
+
+    const transaction = {
+      from: candidate.account,
+      to: fundingRouter,
+      value: candidate.value,
+      data: candidate.data,
+    };
+
+    // Re-simulate exactly the transaction displayed for confirmation.
+    const raw = await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    const currentOut = decodeFunctionResult({
+      abi: fundingABI,
+      functionName: "swapExactNATIVEForTokens",
+      data: raw,
+    });
+
+    if (currentOut < candidate.minimum) {
+      throw new Error("Đầu ra không đạt minimum. Hãy mô phỏng lại.");
+    }
+
+    const accepted = window.confirm([
+      "Xác nhận giao dịch cấp token trên Fuji 43113:",
+      `Ví: ${candidate.account}`,
+      `Router: ${fundingRouter}`,
+      "Chi: 0.001 AVAX testnet + phí gas",
+      `Nhận tối thiểu: ${formatUnits(candidate.minimum, 6)} LFJ USDT`,
+      `Deadline: ${candidate.deadline}`,
+      "",
+      "Tiếp tục mở Core để bạn xem và ký?",
+    ].join("\n"));
+
+    if (!accepted) {
+      output.textContent = "Đã hủy. Chưa gửi giao dịch.";
+      return;
+    }
+
+    // Check account and chain again after the confirmation dialog.
+    const latestAccounts = await provider.request({
+      method: "eth_accounts",
+    });
+    const latestChain = await provider.request({
+      method: "eth_chainId",
+    });
+
+    if (
+      BigInt(latestChain) !== 43113n ||
+      latestAccounts[0]?.toLowerCase() !== candidate.account.toLowerCase() ||
+      Date.now() - candidate.createdAt > 60_000
+    ) {
+      throw new Error("Thông tin ví hoặc thời hạn đã đổi. Mô phỏng lại.");
+    }
+
+    // Lock retries before submission: a provider error may be ambiguous.
+    fundingSubmitted = true;
+    output.textContent = "Đang chờ bạn xác nhận trong Core...";
+
+    const hash = await provider.request({
+      method: "eth_sendTransaction",
+      params: [transaction],
+    });
+
+    output.textContent = [
+      "Đã gửi giao dịch cấp token.",
+      `Transaction hash: ${hash}`,
+      "Chưa kết luận thành công; cần kiểm tra receipt và số dư.",
+      "Không gửi lại giao dịch này.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+
+    if (fundingSubmitted) {
+      output.textContent +=
+        "\nĐã bắt đầu gửi: kiểm tra Activity trong Core trước khi thử lại.";
+    }
+  }
+});
+
+const executionManager =
+  "0xA7c9881eb43902Ca668bb864668eAA3795f2283B";
+
+const approvalABI = parseAbi([
+  "function approve(address spender,uint256 amount) returns (bool)",
+]);
+
+let approvalStarted = false;
+
+document.querySelector("#approve-usdt").addEventListener("click", async () => {
+  const approveButton = document.querySelector("#approve-usdt");
+  approveButton.disabled = true;
+
+  try {
+    if (approvalStarted) {
+      throw new Error("Đã bắt đầu gửi approval. Kiểm tra Core trước.");
+    }
+
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy kết nối Core trước.");
+
+    async function checkWallet() {
+      const accounts = await provider.request({
+        method: "eth_accounts",
+      });
+      const chain = await provider.request({
+        method: "eth_chainId",
+      });
+
+      if (
+        BigInt(chain) !== 43113n ||
+        accounts[0]?.toLowerCase() !== expectedAccount.toLowerCase()
+      ) {
+        throw new Error("Sai account hoặc không ở Fuji 43113.");
+      }
+
+      return accounts[0];
+    }
+
+    const account = await checkWallet();
+
+    const transaction = {
+      from: account,
+      to: usdt,
+      value: "0x0",
+      data: encodeFunctionData({
+        abi: approvalABI,
+        functionName: "approve",
+        args: [executionManager, 10000n],
+      }),
+    };
+
+    const raw = await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    const allowed = decodeFunctionResult({
+      abi: approvalABI,
+      functionName: "approve",
+      data: raw,
+    });
+
+    if (!allowed) throw new Error("Token trả approve = false.");
+
+    const accepted = window.confirm([
+      "Fuji 43113 — xác nhận approval:",
+      `Ví: ${account}`,
+      `Token USDT: ${usdt}`,
+      `Spender Manager: ${executionManager}`,
+      "Allowance mới: 0.01 USDT (10000 raw)",
+      "Native value: 0 AVAX; có phí gas.",
+      "",
+      "Mở Core để xem và ký?",
+    ].join("\n"));
+
+    if (!accepted) {
+      output.textContent = "Đã hủy approval. Chưa gửi giao dịch.";
+      return;
+    }
+
+    await checkWallet();
+
+    approvalStarted = true;
+    output.textContent = "Đang chờ ký approval trong Core...";
+
+    const hash = await provider.request({
+      method: "eth_sendTransaction",
+      params: [transaction],
+    });
+
+    output.textContent = [
+      "Đã gửi approval; cần kiểm tra receipt.",
+      `Transaction hash: ${hash}`,
+      "Chưa gọi setBudget hoặc executeSwap.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (approvalStarted) {
+      output.textContent +=
+        "\nKiểm tra Activity trong Core trước khi thử gửi lại.";
+    }
+  } finally {
+    approveButton.disabled = approvalStarted;
+  }
+});
+
+  const budgetABI = parseAbi([
+  "function setBudget(address token,uint256 amount,uint256 expiry)",
+]);
+
+let budgetStarted = false;
+
+document.querySelector("#set-budget").addEventListener("click", async () => {
+  const budgetButton = document.querySelector("#set-budget");
+  budgetButton.disabled = true;
+
+  try {
+    if (budgetStarted) {
+      throw new Error("Đã bắt đầu gửi budget. Kiểm tra Core trước.");
+    }
+
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy kết nối Core trước.");
+
+    async function checkWallet() {
+      const accounts = await provider.request({
+        method: "eth_accounts",
+      });
+      const chain = await provider.request({
+        method: "eth_chainId",
+      });
+
+      if (
+        BigInt(chain) !== 43113n ||
+        accounts[0]?.toLowerCase() !== expectedAccount.toLowerCase()
+      ) {
+        throw new Error("Sai account hoặc không ở Fuji 43113.");
+      }
+
+      return accounts[0];
+    }
+
+    const account = await checkWallet();
+
+    const block = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!block) throw new Error("Không đọc được block.");
+
+    const expiry = BigInt(block.timestamp) + 3600n;
+
+    const transaction = {
+      from: account,
+      to: executionManager,
+      value: "0x0",
+      data: encodeFunctionData({
+        abi: budgetABI,
+        functionName: "setBudget",
+        args: [usdt, 10000n, expiry],
+      }),
+    };
+
+    await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    const accepted = window.confirm([
+      "Fuji 43113 — đặt budget:",
+      `Ví owner: ${account}`,
+      `Manager: ${executionManager}`,
+      `Token: ${usdt}`,
+      "Budget mới: 0.01 USDT (10000 raw)",
+      `Hết hạn: ${new Date(Number(expiry) * 1000).toLocaleString()}`,
+      "Budget mới thay thế budget cũ, không cộng thêm.",
+      "Không chuyển token; chỉ trả phí gas.",
+      "",
+      "Mở Core để xem và ký?",
+    ].join("\n"));
+
+    if (!accepted) {
+      output.textContent = "Đã hủy đặt budget. Chưa gửi giao dịch.";
+      return;
+    }
+
+    await checkWallet();
+
+    const latestBlock = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!latestBlock || BigInt(latestBlock.timestamp) >= expiry) {
+      throw new Error("Budget đã hết hạn trước khi gửi. Thử lại.");
+    }
+
+    budgetStarted = true;
+    output.textContent = "Đang chờ ký setBudget trong Core...";
+
+    const hash = await provider.request({
+      method: "eth_sendTransaction",
+      params: [transaction],
+    });
+
+    output.textContent = [
+      "Đã gửi setBudget; cần kiểm tra receipt.",
+      `Transaction hash: ${hash}`,
+      `Expiry: ${expiry}`,
+      "Chưa gọi executeSwap.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (budgetStarted) {
+      output.textContent +=
+        "\nKiểm tra Activity trong Core trước khi gửi lại.";
+    }
+  } finally {
+    budgetButton.disabled = budgetStarted;
+  }
+});
+
+  const swapRouter =
+  "0x18556DA13313f3532c54711497A8FedAC273220E";
+const swapPair =
+  "0xc3b7307184381f65B398d385a71EF0490239a2b3";
+const swapAdapter =
+  "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5";
+const lfjUSDC =
+  "0xB6076C93701D6a07266c31066B298AeC6dd65c2d";
+
+const managerSwapABI = parseAbi([
+  "function executeSwap(address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 deadline) returns (uint256 amountOut)",
+  "function swapAdapters(address,address) view returns (address)",
+]);
+
+let managerSwapCandidate = null;
+
+document.querySelector("#simulate-manager-swap")
+  .addEventListener("click", async () => {
+    const button = document.querySelector("#simulate-manager-swap");
+    button.disabled = true;
+    managerSwapCandidate = null;
+
+    try {
+      const provider = wallets.get(select.value);
+      if (!provider) throw new Error("Hãy kết nối Core trước.");
+
+      const accounts = await provider.request({
+        method: "eth_accounts",
+      });
+      const chain = await provider.request({
+        method: "eth_chainId",
+      });
+      const account = accounts[0];
+
+      if (
+        BigInt(chain) !== 43113n ||
+        account?.toLowerCase() !== expectedAccount.toLowerCase()
+      ) {
+        throw new Error("Sai account hoặc không ở Fuji 43113.");
+      }
+
+      const block = await provider.request({
+        method: "eth_getBlockByNumber",
+        params: ["latest", false],
+      });
+      if (!block) throw new Error("Không đọc được block.");
+
+      async function read(to, abi, functionName, args = []) {
+        const raw = await provider.request({
+          method: "eth_call",
+          params: [{
+            to,
+            data: encodeFunctionData({ abi, functionName, args }),
+          }, block.number],
+        });
+
+        return decodeFunctionResult({
+          abi, functionName, data: raw,
+        });
+      }
+
+      const configuredAdapter = await read(
+        executionManager,
+        managerSwapABI,
+        "swapAdapters",
+        [usdt, lfjUSDC]
+      );
+
+      if (
+        configuredAdapter.toLowerCase() !== swapAdapter.toLowerCase()
+      ) {
+        throw new Error("Route Manager không khớp adapter dự kiến.");
+      }
+
+      const tokenY = await read(
+        swapPair, pairABI, "getTokenY"
+      );
+      const swapForY =
+        tokenY.toLowerCase() === lfjUSDC.toLowerCase();
+
+      const amountIn = 10000n;
+      const [left, quotedOut] = await read(
+        swapRouter,
+        fundingABI,
+        "getSwapOut",
+        [swapPair, amountIn, swapForY]
+      );
+
+      if (left !== 0n || quotedOut === 0n) {
+        throw new Error("Quote không đổi hết input hoặc output bằng zero.");
+      }
+
+      // Demo slippage: 1%, rounded down in raw units.
+      const minimum = quotedOut * 9900n / 10000n;
+      if (minimum === 0n) throw new Error("Minimum output bằng zero.");
+
+      const deadline = BigInt(block.timestamp) + 60n;
+      const transaction = {
+        from: account,
+        to: executionManager,
+        value: "0x0",
+        data: encodeFunctionData({
+          abi: managerSwapABI,
+          functionName: "executeSwap",
+          args: [usdt, lfjUSDC, amountIn, minimum, deadline],
+        }),
+      };
+
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [transaction, block.number],
+      });
+
+      const actualOut = decodeFunctionResult({
+        abi: managerSwapABI,
+        functionName: "executeSwap",
+        data: raw,
+      });
+
+      if (actualOut < minimum) {
+        throw new Error("Simulation output thấp hơn minimum.");
+      }
+
+      managerSwapCandidate = {
+        provider,
+        transaction,
+        amountIn,
+        minimum,
+        deadline,
+        quotedOut,
+        createdAt: Date.now(),
+      };
+
+      output.textContent = [
+        "Manager swap simulation thành công — CHƯA gửi.",
+        `Owner/recipient: ${account}`,
+        "Chain: 43113",
+        `Manager: ${executionManager}`,
+        `Adapter: ${configuredAdapter}`,
+        `Block: ${BigInt(block.number)}`,
+        "Input: 0.01 LFJ USDT (10000 raw)",
+        `Quote: ${formatUnits(quotedOut, 6)} LFJ USDC`,
+        `Minimum: ${formatUnits(minimum, 6)} LFJ USDC`,
+        `Simulation output: ${formatUnits(actualOut, 6)} LFJ USDC`,
+        `Deadline: ${deadline}`,
+        "Native value: 0 AVAX",
+      ].join("\n");
+    } catch (error) {
+      output.textContent = error.message ?? String(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  let managerSwapStarted = false;
+
+document.querySelector("#send-manager-swap")
+  .addEventListener("click", async () => {
+    const button = document.querySelector("#send-manager-swap");
+    button.disabled = true;
+
+    const candidate = managerSwapCandidate;
+    managerSwapCandidate = null;
+
+    try {
+      if (managerSwapStarted || localStorage.getItem("day08-swap-submission")) {
+        throw new Error("Đã có lần gửi swap. Kiểm tra Core trước khi thử lại.");
+      }
+      if (!candidate || Date.now() - candidate.createdAt > 30_000) {
+        throw new Error("Hãy mô phỏng lại rồi ký trong 30 giây.");
+      }
+
+      const provider = wallets.get(select.value);
+      if (provider !== candidate.provider) {
+        throw new Error("Ví được chọn đã thay đổi.");
+      }
+
+      async function checkWalletAndTime() {
+        const accounts = await provider.request({
+          method: "eth_accounts",
+        });
+        const chain = await provider.request({
+          method: "eth_chainId",
+        });
+        const block = await provider.request({
+          method: "eth_getBlockByNumber",
+          params: ["latest", false],
+        });
+
+        if (
+          BigInt(chain) !== 43113n ||
+          accounts[0]?.toLowerCase() !== expectedAccount.toLowerCase()
+        ) {
+          throw new Error("Account hoặc chain không đúng.");
+        }
+        if (
+          !block ||
+          BigInt(block.timestamp) + 20n >= candidate.deadline ||
+          Date.now() - candidate.createdAt > 30_000
+        ) {
+          throw new Error("Không còn đủ thời gian ký. Hãy mô phỏng lại.");
+        }
+      }
+
+      await checkWalletAndTime();
+
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [candidate.transaction, "latest"],
+      });
+      const currentOut = decodeFunctionResult({
+        abi: managerSwapABI,
+        functionName: "executeSwap",
+        data: raw,
+      });
+
+      if (currentOut !== candidate.quotedOut) {
+        throw new Error("Đầu ra đã thay đổi. Mô phỏng lại để xem và xác nhận.");
+      }
+
+      const accepted = window.confirm([
+        "Xác nhận swap trên Fuji 43113:",
+        `Owner/recipient: ${expectedAccount}`,
+        `Manager: ${executionManager}`,
+        "Chi: 0.01 LFJ USDT (10000 raw)",
+        `Dự kiến nhận: ${formatUnits(currentOut, 6)} LFJ USDC`,
+        `Minimum: ${formatUnits(candidate.minimum, 6)} LFJ USDC`,
+        `Deadline: ${candidate.deadline}`,
+        "Native value: 0 AVAX; có phí gas.",
+        "",
+        "Mở Core để xem và ký?",
+      ].join("\n"));
+
+      if (!accepted) {
+        output.textContent = "Đã hủy swap. Chưa gửi.";
+        return;
+      }
+
+      await checkWalletAndTime();
+
+      const expectedIntent = {
+        tx: {
+          chain_id: 43113,
+          from: candidate.transaction.from,
+          to: candidate.transaction.to,
+          value: "0",
+          data: candidate.transaction.data,
+        },
+        adapter_address: swapAdapter,
+        token_in_address: usdt,
+        token_out_address: lfjUSDC,
+        amount_in_raw: candidate.amountIn.toString(),
+        min_amount_out_raw: candidate.minimum.toString(),
+        deadline: Number(candidate.deadline),
+      };
+
+      // Save expected intent before submitting, independently of receipt.
+      localStorage.setItem(
+        "day08-swap-intent",
+        JSON.stringify(expectedIntent)
+      );
+      localStorage.setItem(
+        "day08-swap-submission",
+        JSON.stringify({ status: "submission_started" })
+      );
+
+      managerSwapStarted = true;
+      output.textContent = "Đang chờ bạn ký swap trong Core...";
+
+      const hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [candidate.transaction],
+      });
+
+      localStorage.setItem(
+        "day08-swap-submission",
+        JSON.stringify({ status: "submitted", transaction_hash: hash })
+      );
+
+      const evidence = {
+        transaction_hash: hash,
+        expected_intent: expectedIntent,
+      };
+
+      const blob = new Blob(
+        [JSON.stringify(evidence, null, 2)],
+        { type: "application/json" }
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "swap_fuji_expected_intent.json";
+      link.textContent = "Tải intent và transaction hash";
+
+      output.textContent =
+        `Đã gửi swap.\nTransaction hash: ${hash}\n` +
+        "Chưa kết luận thành công; cần chạy receipt verifier.\n";
+      output.append(link);
+    } catch (error) {
+      output.textContent = error.message ?? String(error);
+      if (managerSwapStarted) {
+        output.textContent +=
+          "\nKiểm tra Activity trong Core, không tự gửi lại.";
+      }
+    } finally {
+      button.disabled =
+        managerSwapStarted ||
+        localStorage.getItem("day08-swap-submission") !== null;
+    }
+  });
+  </script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "mocha";
 import { network } from "hardhat";
 
-async function deploySwapFixture(reverse = false) {
+export async function deploySwapFixture(reverse = false) {
   const { ethers } = await network.create();
   const [owner, alice, bob] = await ethers.getSigners();
 

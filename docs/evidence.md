@@ -45,3 +45,42 @@
 - One transaction involves the wallet through an ERC-20 transfer,
   although its native transaction from/to do not match the wallet.
 - No RPC history fallback was added because the retry succeeded.
+
+## Day 08 — Fuji Manager swap verified
+
+- Network: Avalanche Fuji C-Chain, chain ID 43113.
+- Owner/recipient: `0x37E146a4141C8fd82f0c8c5Bb8035930fD0ea588`.
+- Manager: `0xA7c9881eb43902Ca668bb864668eAA3795f2283B`.
+- Adapter: `0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5`.
+- Input token: LFJ USDT, `0xAb231A5744C8E6c45481754928cCfFFFD4aa0732`.
+- Output token: LFJ USDC, `0xB6076C93701D6a07266c31066B298AeC6dd65c2d`.
+- Input: 10000 raw (0.01 USDT).
+- Minimum output: 9899 raw (0.009899 USDC).
+- Actual output: 9999 raw (0.009999 USDC).
+- Native transaction value: 0 AVAX; gas paid separately.
+- Transaction: `0xcb6292135bf452bd6669b21cc9fb8dac6bbd4b74854f1502e1cad0724232f0f0`.
+- Mined block: 60946687.
+- Explorer: https://testnet.snowtrace.io/tx/0xcb6292135bf452bd6669b21cc9fb8dac6bbd4b74854f1502e1cad0724232f0f0
+
+Observed wallet state before and after execution:
+
+| Field | Before | After |
+|---|---:|---:|
+| USDT balance raw | 14164 | 4164 |
+| USDC balance raw | 0 | 9999 |
+| USDT allowance to Manager raw | 10000 | 0 |
+| Effective USDT budget raw | 10000 | 0 |
+
+Verification:
+- TypeScript read-only checker matched transaction fields and the
+  Manager's SwapExecuted event against the saved expected intent.
+- Backend TestFujiLiveVerifyExecutedSwap passed using live RPC.
+- VerifyTx returned status succeeded, verified true and amount_out_raw 9999.
+- Intent fixture: backend/internal/avalanche/testdata/swap_fuji_expected_intent.json.
+
+Scope:
+- Executed through frontend/core-check.html with explicit Core wallet signing.
+- This verifies the wallet harness and deployed Manager/adapter route.
+- Full product modal → Confirm API → wallet integration remains pending.
+- This does not establish DB-level transaction-hash uniqueness or
+  confirm/reject concurrency protection.

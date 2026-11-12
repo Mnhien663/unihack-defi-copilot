@@ -1,6 +1,7 @@
 package avalanche
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -226,3 +227,449 @@ func (r *RPCReceiptReader) ReadReceipt(
 }
 
 var _ ReceiptReader = (*RPCReceiptReader)(nil)
+
+// ExpectedSwapIntent must come from the trusted, confirmed action.
+// Do not construct it from the transaction being verified or from
+// unchecked fields submitted alongside its hash.
+type ExpectedSwapIntent struct {
+	Tx UnsignedTx `json:"tx"`
+
+	AdapterAddress  string `json:"adapter_address"`
+	TokenInAddress  string `json:"token_in_address"`
+	TokenOutAddress string `json:"token_out_address"`
+
+	AmountInRaw     string `json:"amount_in_raw"`
+	MinAmountOutRaw string `json:"min_amount_out_raw"`
+	Deadline        uint64 `json:"deadline"`
+}
+
+// VerifiedSwapResult keeps transaction status separate from verification.
+// A pending or reverted transaction must never have Verified = true.
+type VerifiedSwapResult struct {
+	Receipt ReceiptResult `json:"receipt"`
+
+	Verified     bool    `json:"verified"`
+	AmountOutRaw *string `json:"amount_out_raw"`
+}
+
+var (
+	ErrInvalidSwapIntent = errors.New(
+		"invalid expected swap intent",
+	)
+
+	ErrTransactionIntentMismatch = errors.New(
+		"transaction does not match expected swap intent",
+	)
+
+	ErrSwapEventMismatch = errors.New(
+		"swap execution event missing or mismatched",
+	)
+)
+
+// validateExpectedSwapIntent checks internal consistency.
+// It does not establish user confirmation or session ownership.
+func validateExpectedSwapIntent(
+	intent ExpectedSwapIntent,
+) ([]byte, error) {
+	invalid := func(reason string) ([]byte, error) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidSwapIntent, reason)
+	}
+
+	if intent.Tx.ChainID != uint64(FujiChainID) {
+		return invalid("chain must be Fuji")
+	}
+
+	for _, address := range []string{
+		intent.Tx.From,
+		intent.Tx.To,
+		intent.AdapterAddress,
+		intent.TokenInAddress,
+		intent.TokenOutAddress,
+	} {
+		if !common.IsHexAddress(address) ||
+			common.HexToAddress(address) == (common.Address{}) {
+			return invalid("invalid or zero address")
+		}
+	}
+
+	builder, err := NewSwapTxBuilder()
+	if err != nil {
+		return nil, fmt.Errorf("initialize intent validator: %w", err)
+	}
+
+	owner := common.HexToAddress(intent.Tx.From)
+	manager := common.HexToAddress(intent.Tx.To)
+	adapter := common.HexToAddress(intent.AdapterAddress)
+	tokenIn := common.HexToAddress(intent.TokenInAddress)
+	tokenOut := common.HexToAddress(intent.TokenOutAddress)
+
+	if manager != builder.manager {
+		return invalid("unexpected execution manager")
+	}
+
+	// This verifier currently supports the deployed LFJ route only.
+	if adapter != common.HexToAddress(
+		"0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5",
+	) {
+		return invalid("unexpected LFJ adapter")
+	}
+
+	x := common.HexToAddress(lfjFujiTokenX)
+	y := common.HexToAddress(lfjFujiTokenY)
+	if !((tokenIn == x && tokenOut == y) ||
+		(tokenIn == y && tokenOut == x)) {
+		return invalid("unsupported token pair")
+	}
+
+	for _, excluded := range []common.Address{
+		manager,
+		adapter,
+		tokenIn,
+		tokenOut,
+		common.HexToAddress(lfjFujiRouter),
+		common.HexToAddress(lfjFujiPair),
+	} {
+		if owner == excluded {
+			return invalid("invalid swap owner")
+		}
+	}
+
+	if intent.Tx.Value != "0" {
+		return invalid("native value must be zero")
+	}
+
+	amountIn, err := lfjQuoteInput(intent.AmountInRaw)
+	if err != nil {
+		return invalid("invalid input amount")
+	}
+
+	minOut, err := lfjQuoteInput(intent.MinAmountOutRaw)
+	if err != nil {
+		return invalid("invalid minimum output")
+	}
+
+	if intent.Deadline == 0 {
+		return invalid("deadline must be nonzero")
+	}
+
+	expectedData, err := builder.abi.Pack(
+		"executeSwap",
+		tokenIn,
+		tokenOut,
+		amountIn,
+		minOut,
+		new(big.Int).SetUint64(intent.Deadline),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("encode expected swap intent: %w", err)
+	}
+
+	intentData, err := hexutil.Decode(intent.Tx.Data)
+	if err != nil || !bytes.Equal(intentData, expectedData) {
+		return invalid("calldata does not match intent fields")
+	}
+
+	return expectedData, nil
+}
+
+// matchSwapTransaction compares actual transaction fields against
+// trusted intent data. Receipt success and events are checked separately.
+func matchSwapTransaction(
+	intent ExpectedSwapIntent,
+	actual ReceiptResult,
+) error {
+	expectedData, err := validateExpectedSwapIntent(intent)
+	if err != nil {
+		return err
+	}
+
+	mismatch := func(field string) error {
+		return fmt.Errorf(
+			"%w: %s",
+			ErrTransactionIntentMismatch,
+			field,
+		)
+	}
+
+	if actual.ChainID != intent.Tx.ChainID {
+		return mismatch("chain")
+	}
+
+	if !common.IsHexAddress(actual.FromAddress) ||
+		common.HexToAddress(actual.FromAddress) !=
+			common.HexToAddress(intent.Tx.From) {
+		return mismatch("sender")
+	}
+
+	if actual.ToAddress == nil ||
+		!common.IsHexAddress(*actual.ToAddress) ||
+		common.HexToAddress(*actual.ToAddress) !=
+			common.HexToAddress(intent.Tx.To) {
+		return mismatch("destination")
+	}
+
+	value, err := ParseRawAmount(actual.ValueRaw)
+	if err != nil || value.Sign() != 0 {
+		return mismatch("native value")
+	}
+
+	actualData, err := hexutil.Decode(actual.Input)
+	if err != nil || !bytes.Equal(actualData, expectedData) {
+		return mismatch("calldata")
+	}
+
+	return nil
+}
+
+func verifySwapExecutedEvent(
+	intent ExpectedSwapIntent,
+	actual ReceiptResult,
+) (string, error) {
+	if _, err := validateExpectedSwapIntent(intent); err != nil {
+		return "", err
+	}
+
+	builder, err := NewSwapTxBuilder()
+	if err != nil {
+		return "", err
+	}
+
+	event, exists := builder.abi.Events["SwapExecuted"]
+	if !exists ||
+		event.Sig != "SwapExecuted(address,address,address,address,uint256,uint256)" ||
+		event.Anonymous ||
+		len(event.Inputs) != 6 {
+		return "", errors.New("unexpected SwapExecuted ABI")
+	}
+
+	// Require the indexed layout used by the deployed Manager.
+	for i, input := range event.Inputs {
+		if input.Indexed != (i < 3) {
+			return "", errors.New("unexpected SwapExecuted indexed layout")
+		}
+	}
+
+	mismatch := func(reason string) (string, error) {
+		return "", fmt.Errorf("%w: %s", ErrSwapEventMismatch, reason)
+	}
+
+	expectedTopics := []common.Hash{
+		event.ID,
+		common.BytesToHash(
+			common.HexToAddress(intent.Tx.From).Bytes(),
+		),
+		common.BytesToHash(
+			common.HexToAddress(intent.TokenInAddress).Bytes(),
+		),
+		common.BytesToHash(
+			common.HexToAddress(intent.TokenOutAddress).Bytes(),
+		),
+	}
+
+	amountIn, err := lfjQuoteInput(intent.AmountInRaw)
+	if err != nil {
+		return "", err
+	}
+	minOut, err := lfjQuoteInput(intent.MinAmountOutRaw)
+	if err != nil {
+		return "", err
+	}
+
+	found := false
+	amountOutRaw := ""
+
+	for _, entry := range actual.Logs {
+		if !common.IsHexAddress(entry.Address) ||
+			common.HexToAddress(entry.Address) != builder.manager {
+			continue
+		}
+		if len(entry.Topics) == 0 {
+			continue
+		}
+
+		signature, err := hexutil.Decode(entry.Topics[0])
+		if err != nil ||
+			!bytes.Equal(signature, event.ID.Bytes()) {
+			continue
+		}
+
+		if found {
+			return mismatch("multiple SwapExecuted events")
+		}
+		found = true
+
+		if entry.Removed || len(entry.Topics) != 4 {
+			return mismatch("invalid event topics or removed log")
+		}
+
+		for i, expected := range expectedTopics {
+			topic, err := hexutil.Decode(entry.Topics[i])
+			if err != nil || !bytes.Equal(topic, expected.Bytes()) {
+				return mismatch("owner or token topics differ")
+			}
+		}
+
+		data, err := hexutil.Decode(entry.Data)
+		if err != nil || len(data) != 3*32 {
+			return mismatch("invalid event data")
+		}
+
+		values, err := event.Inputs.NonIndexed().Unpack(data)
+		if err != nil || len(values) != 3 {
+			return mismatch("cannot decode event data")
+		}
+
+		adapter, adapterOK := values[0].(common.Address)
+		spent, spentOK := values[1].(*big.Int)
+		received, receivedOK := values[2].(*big.Int)
+
+		if !adapterOK || !spentOK || !receivedOK ||
+			spent == nil || received == nil {
+			return mismatch("invalid decoded event types")
+		}
+
+		// Re-encode to reject noncanonical ABI data.
+		canonical, err := event.Inputs.NonIndexed().Pack(
+			adapter, spent, received,
+		)
+		if err != nil || !bytes.Equal(data, canonical) {
+			return mismatch("noncanonical event data")
+		}
+
+		if adapter != common.HexToAddress(intent.AdapterAddress) {
+			return mismatch("adapter differs")
+		}
+		if spent.Cmp(amountIn) != 0 {
+			return mismatch("input amount differs")
+		}
+		if received.Sign() <= 0 || received.Cmp(minOut) < 0 {
+			return mismatch("output is below the confirmed minimum")
+		}
+
+		amountOutRaw = received.String()
+	}
+
+	if !found {
+		return mismatch("SwapExecuted event missing")
+	}
+
+	return amountOutRaw, nil
+}
+
+// VerifyTx verifies chain execution against a trusted confirmed intent.
+// It does not enforce session ownership or transaction-hash uniqueness;
+// those checks belong to the action service and database.
+func (r *RPCReceiptReader) VerifyTx(
+	ctx context.Context,
+	transactionHash string,
+	intent ExpectedSwapIntent,
+) (VerifiedSwapResult, error) {
+	if err := ctx.Err(); err != nil {
+		return VerifiedSwapResult{}, err
+	}
+
+	// Reject inconsistent intent before making RPC calls.
+	if _, err := validateExpectedSwapIntent(intent); err != nil {
+		return VerifiedSwapResult{}, err
+	}
+
+	receipt, err := r.ReadReceipt(ctx, transactionHash)
+	if err != nil {
+		return VerifiedSwapResult{}, err
+	}
+
+	result := VerifiedSwapResult{
+		Receipt: receipt,
+	}
+
+	if err := matchSwapTransaction(intent, receipt); err != nil {
+		return result, err
+	}
+
+	switch receipt.Status {
+	case TransactionStatusPending:
+		// Pending is not successful verification.
+		return result, nil
+
+	case TransactionStatusFailed:
+		// Preserve the reverted receipt for the caller.
+		return result, nil
+
+	case TransactionStatusSucceeded:
+		amountOut, err := verifySwapExecutedEvent(intent, receipt)
+		if err != nil {
+			return result, err
+		}
+
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
+		result.Verified = true
+		result.AmountOutRaw = &amountOut
+		return result, nil
+
+	default:
+		return result, errors.New("unexpected transaction status")
+	}
+}
+
+// WaitForVerifiedSwap polls pending transactions for at most 30 seconds.
+// A timeout means verification is unfinished, not that the swap reverted.
+func (r *RPCReceiptReader) WaitForVerifiedSwap(
+	ctx context.Context,
+	transactionHash string,
+	intent ExpectedSwapIntent,
+) (VerifiedSwapResult, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	delay := 250 * time.Millisecond
+	const maxDelay = 2 * time.Second
+
+	var last VerifiedSwapResult
+
+	for {
+		if err := waitCtx.Err(); err != nil {
+			return last, err
+		}
+
+		result, err := r.VerifyTx(
+			waitCtx,
+			transactionHash,
+			intent,
+		)
+		if err != nil {
+			// Preserve the latest known receipt on RPC errors/timeouts.
+			if result.Receipt.TransactionHash != "" {
+				last = result
+			}
+			return last, err
+		}
+		last = result
+
+		if err := waitCtx.Err(); err != nil {
+			return last, err
+		}
+
+		if result.Receipt.Status != TransactionStatusPending {
+			// Either verified success or a mined reverted transaction.
+			return result, nil
+		}
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			return last, waitCtx.Err()
+		case <-timer.C:
+		}
+
+		if delay < maxDelay {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+}
