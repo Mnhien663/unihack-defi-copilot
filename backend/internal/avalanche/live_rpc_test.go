@@ -174,3 +174,70 @@ func TestFujiLiveVerifyExecutedSwap(t *testing.T) {
 	}
 	t.Logf("Verified Fuji swap:\n%s", output)
 }
+
+func TestFujiLiveVerifyExecutedDeposit(t *testing.T) {
+	if os.Getenv("AVALANCHE_LIVE_TEST") != "1" {
+		t.Skip("set AVALANCHE_LIVE_TEST=1 to run")
+	}
+
+	data, err := os.ReadFile(
+		"testdata/deposit_fuji_expected_intent.json",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		TransactionHash string                `json:"transaction_hash"`
+		ExpectedIntent  ExpectedDepositIntent `json:"expected_intent"`
+	}
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	const expectedHash = "0xc82ed0fcba8a995536e2f3bccd1c2f3eb139fe74c008500f26dcdca29649f82d"
+	if evidence.TransactionHash != expectedHash {
+		t.Fatal("unexpected deposit transaction hash")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second,
+	)
+	defer cancel()
+
+	client, err := NewRPCClient(ctx, RPCConfig{
+		URL:             "https://api.avax-test.network/ext/bc/C/rpc",
+		ExpectedChainID: FujiChainID,
+		Timeout:         10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	reader, err := NewRPCReceiptReader(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reader.VerifyDepositTx(
+		ctx,
+		evidence.TransactionHash,
+		evidence.ExpectedIntent,
+	)
+	if err != nil {
+		t.Fatalf("VerifyDepositTx: %v", err)
+	}
+	if result.Receipt.Status != TransactionStatusSucceeded ||
+		!result.Verified {
+		t.Fatalf("deposit not verified: %+v", result)
+	}
+	if result.SharesOutRaw == nil ||
+		*result.SharesOutRaw != "100000000000000000" {
+		t.Fatalf("unexpected deposit shares: %v", result.SharesOutRaw)
+	}
+
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Verified Fuji deposit:\n%s", output)
+}

@@ -1216,3 +1216,101 @@ Live Go simulation success and a real manager swap remain unverified.
 - Never use a backend deployer key to execute user swaps.
 - Configure wallet gas/fees at signing time; the unsigned DTO does not
   itself contain gas or EIP-1559 fee fields.
+
+## DemoVault deposit execution — Day 09
+
+Network: Avalanche Fuji C-Chain, chain ID 43113.
+
+### Backend entry points
+
+| Operation | Entry point | File |
+|---|---|---|
+| Build unsigned deposit | NewDepositTxBuilder / BuildDepositTx | backend/internal/avalanche/deposit_tx.go |
+| Read execution requirements | NewDepositRequirementsReader / ReadDepositRequirements | backend/internal/avalanche/deposit_requirements.go |
+| Simulate and estimate gas | NewDepositSimulator / SimulateDeposit | backend/internal/avalanche/deposit_simulation.go |
+| Verify mined deposit | RPCReceiptReader.VerifyDepositTx | backend/internal/avalanche/deposit_receipts.go |
+
+BuildDepositRequest contains OwnerAddress, Metrics, MinSharesRaw and Deadline.
+Metrics must come from the backend vault reader; owner must come from
+validated wallet context. Do not trust model/client-supplied metrics.
+
+The builder targets the configured Manager:
+executeDeposit(address token,uint256 amount,uint256 minSharesOut,uint256 deadline).
+
+- Native value is zero; gas is paid separately.
+- Shares are received by the caller/owner.
+- Preview and block time must be fresh; preview lifetime is 60 seconds.
+- Deadline must be future and within preview expiry.
+- Raw amounts use decimal strings and uint256 bounds.
+- DDEMO and dvDDEMO both use 18 decimals.
+
+### Requirements and simulation
+
+Requirements read current balance, owner-to-Manager allowance,
+effective budget, supported tokens, vaultConfigs, adapter bindings,
+previewDeposit and maxDeposit at one pinned block.
+
+Blockers:
+- INPUT_TOKEN_DISABLED
+- SHARE_TOKEN_DISABLED
+- VAULT_ROUTE_NOT_CONFIGURED
+- VAULT_ROUTE_NOT_VERIFIED
+- INSUFFICIENT_TOKEN_BALANCE
+- ERC20_APPROVAL_REQUIRED
+- INSUFFICIENT_BUDGET
+- MAX_DEPOSIT_EXCEEDED
+- MIN_SHARES_NOT_MET
+- INSUFFICIENT_GAS_BALANCE (simulation fee check)
+
+RPC failures are errors, not zero balances.
+remaining=0 does not distinguish unset, expired, revoked or exhausted budget.
+
+Simulation statuses: blocked, reverted, succeeded.
+A succeeded simulation is not a broadcast or mined transaction.
+Gas estimation uses current node state; combined simulation provenance
+does not claim one pinned block.
+
+### Receipt verification
+
+ExpectedDepositIntent contains:
+tx, adapter_address, vault_address, asset_address,
+assets_raw, min_shares_raw and deadline.
+
+VerifyDepositTx matches chain/from/to/value/calldata and requires:
+- Manager DepositExecuted for the expected owner/token/share token/adapter.
+- Vault Deposit from the adapter to the owner.
+- Vault share mint Transfer from zero address to the owner.
+- Matching asset/share amounts and shares at least minSharesRaw.
+
+Pending or reverted transactions return verified=false.
+Verification does not provide DB-level hash uniqueness or session authorization.
+
+### Demo labeling and integration
+
+The deployed DemoVault is a demo protocol with live on-chain data.
+Vault metrics, build and simulation retain is_demo=true.
+The generic receipt provenance describes live RPC retrieval; its is_demo=false
+must not be interpreted as a production-protocol classification.
+
+APY remains null: no yield strategy or verified yield source exists.
+
+Dev1 owns prepare_vault_deposit, policy, stored actions and Confirm/reject.
+Dev3 owns product modal, wallet checks and transaction signing.
+The backend does not sign or broadcast.
+
+Reference wallet harness: frontend/core-check.html.
+Read-only verification: contracts/scripts/check-vault-wallet.ts.
+Expected intent fixtures:
+- backend/internal/avalanche/testdata/deposit_fuji_expected_intent.json
+- backend/internal/avalanche/testdata/redeem_fuji_expected_intent.json
+
+Fuji deposit and direct owner redeem are verified in docs/evidence.md.
+Redeem is a developer proof of share ownership, not an additional promised
+MVP write tool. Its vault method has no minAssets or deadline parameter.
+
+### Gate B status
+
+Core MVP write scope remains swap and vault deposit.
+prepare_add_liquidity is optional and has not been approved by the team.
+Dev2 recommends deferring LP while core API/UI integration is pending.
+No LP implementation or additional write-tool commitment is made here.

@@ -14,14 +14,21 @@
   <button id="connect">Kết nối và kiểm tra</button>
   <button id="simulate">Mô phỏng lấy LFJ USDT</button>
   <button id="send-funding" disabled>
-    <button id="approve-usdt">Approve 0.01 USDT cho Manager</button>
   Xác nhận đổi 0.001 AVAX lấy USDT
 </button>
+<button id="approve-usdt">Approve 0.01 USDT cho Manager</button>
   <button id="set-budget">Đặt budget 0.01 USDT / 1 giờ</button>
   <button id="simulate-manager-swap">
   Mô phỏng swap 0.01 USDT → USDC
 </button>
   <button id="send-manager-swap">Xác nhận và ký swap qua Manager</button>
+  <hr>
+<button id="approve-ddemo">Approve 0.1 DDEMO cho Manager</button>
+<button id="budget-ddemo">Đặt budget 0.1 DDEMO / 1 giờ</button>
+<button id="simulate-ddemo-deposit">Mô phỏng deposit 0.1 DDEMO</button>
+<button id="send-ddemo-deposit">Xác nhận và ký deposit 0.1 DDEMO</button>
+<button id="simulate-demo-redeem">Mô phỏng redeem 0.1 dvDDEMO</button>
+<button id="send-demo-redeem">Xác nhận và ký redeem 0.1 dvDDEMO</button>
   <pre id="output"></pre>
 
   <script type="module">
@@ -896,6 +903,923 @@ document.querySelector("#send-manager-swap")
         localStorage.getItem("day08-swap-submission") !== null;
     }
   });
+
+  const demoDepositAsset =
+  "0xcCCb83Fbe349fAebDE74Ce633D25B282E6FDd21A";
+const demoDepositAmount = 100000000000000000n;
+
+const demoApprovalABI = parseAbi([
+  "function approve(address spender,uint256 amount) returns (bool)",
+  "function allowance(address owner,address spender) view returns (uint256)",
+  "function balanceOf(address owner) view returns (uint256)",
+]);
+
+const demoApproveButton = document.querySelector("#approve-ddemo");
+const demoApprovalKey = "day09-ddemo-approval";
+let demoApprovalBusy = false;
+
+async function checkDemoWallet(provider) {
+  if (wallets.get(select.value) !== provider) {
+    throw new Error("Ví được chọn đã thay đổi.");
+  }
+  const accounts = await provider.request({ method: "eth_accounts" });
+  const chain = await provider.request({ method: "eth_chainId" });
+
+  if (
+    BigInt(chain) !== 43113n ||
+    accounts[0]?.toLowerCase() !== expectedAccount.toLowerCase()
+  ) {
+    throw new Error("Cần đúng ví Core và Fuji 43113.");
+  }
+  return accounts[0];
+}
+
+demoApproveButton.addEventListener("click", async () => {
+  if (demoApprovalBusy) return;
+  demoApprovalBusy = true;
+  demoApproveButton.disabled = true;
+  let submissionStarted = false;
+
+  try {
+    const saved = localStorage.getItem(demoApprovalKey);
+    if (saved) {
+      throw new Error(
+        "Approval đã có lần gửi. Kiểm tra trước khi thử lại:\n" + saved
+      );
+    }
+
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy chọn và kết nối Core.");
+    const account = await checkDemoWallet(provider);
+
+    async function readToken(functionName, args) {
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [{
+          to: demoDepositAsset,
+          data: encodeFunctionData({
+            abi: demoApprovalABI, functionName, args,
+          }),
+        }, "latest"],
+      });
+      return decodeFunctionResult({
+        abi: demoApprovalABI, functionName, data: raw,
+      });
+    }
+
+    const balance = await readToken("balanceOf", [account]);
+    const allowance = await readToken(
+      "allowance", [account, executionManager]
+    );
+
+    if (balance < demoDepositAmount) {
+      throw new Error("Không đủ 0.1 DDEMO.");
+    }
+    if (allowance >= demoDepositAmount) {
+      output.textContent = "Allowance đã đủ. Không gửi thêm approval.";
+      return;
+    }
+
+    const transaction = {
+      from: account,
+      to: demoDepositAsset,
+      value: "0x0",
+      data: encodeFunctionData({
+        abi: demoApprovalABI,
+        functionName: "approve",
+        args: [executionManager, demoDepositAmount],
+      }),
+    };
+
+    const raw = await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+    const allowed = decodeFunctionResult({
+      abi: demoApprovalABI,
+      functionName: "approve",
+      data: raw,
+    });
+    if (!allowed) throw new Error("Token trả approve = false.");
+
+    if (!window.confirm([
+      "Approve DDEMO trên Fuji 43113",
+      `Ví: ${account}`,
+      `Token: ${demoDepositAsset}`,
+      `Spender Manager: ${executionManager}`,
+      "Allowance mới: 0.1 DDEMO",
+      "Native value: 0 AVAX; trả phí gas riêng.",
+      "Chưa đặt budget hoặc deposit.",
+      "Mở Core để xem và ký?",
+    ].join("\n"))) {
+      output.textContent = "Đã hủy. Chưa gửi approval.";
+      return;
+    }
+
+    await checkDemoWallet(provider);
+    localStorage.setItem(demoApprovalKey, JSON.stringify({
+      status: "submission_started",
+    }));
+    submissionStarted = true;
+
+    output.textContent = "Đang chờ ký approval DDEMO trong Core...";
+    let hash;
+    try {
+      hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [transaction],
+      });
+    } catch (error) {
+      // Only an explicit wallet rejection unlocks a retry automatically.
+      if (Number(error.code) === 4001) {
+        localStorage.removeItem(demoApprovalKey);
+        submissionStarted = false;
+      }
+      throw error;
+    }
+
+    localStorage.setItem(demoApprovalKey, JSON.stringify({
+      status: "submitted",
+      transaction_hash: hash,
+    }));
+    output.textContent = [
+      "Đã gửi approval DDEMO; cần kiểm tra receipt.",
+      `Transaction hash: ${hash}`,
+      "Chưa gọi setBudget hoặc executeDeposit.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (submissionStarted) {
+      output.textContent +=
+        "\nKiểm tra Activity trong Core trước khi thử lại.";
+    }
+  } finally {
+    demoApprovalBusy = false;
+    demoApproveButton.disabled =
+      localStorage.getItem(demoApprovalKey) !== null;
+  }
+});
+
+  const demoBudgetButton = document.querySelector("#budget-ddemo");
+const demoBudgetKey = "day09-ddemo-budget";
+let demoBudgetBusy = false;
+
+const demoBudgetABI = parseAbi([
+  "function setBudget(address token,uint256 amount,uint256 expiry)",
+  "function remaining(address owner,address token) view returns (uint256)",
+]);
+
+demoBudgetButton.addEventListener("click", async () => {
+  if (demoBudgetBusy) return;
+  demoBudgetBusy = true;
+  demoBudgetButton.disabled = true;
+  let submissionStarted = false;
+
+  try {
+    const saved = localStorage.getItem(demoBudgetKey);
+    if (saved) {
+      throw new Error("Budget đã có lần gửi. Kiểm tra trước:\n" + saved);
+    }
+
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy chọn và kết nối Core.");
+    const account = await checkDemoWallet(provider);
+
+    const rawRemaining = await provider.request({
+      method: "eth_call",
+      params: [{
+        to: executionManager,
+        data: encodeFunctionData({
+          abi: demoBudgetABI,
+          functionName: "remaining",
+          args: [account, demoDepositAsset],
+        }),
+      }, "latest"],
+    });
+    const remaining = decodeFunctionResult({
+      abi: demoBudgetABI,
+      functionName: "remaining",
+      data: rawRemaining,
+    });
+    if (remaining >= demoDepositAmount) {
+      output.textContent = "Budget hiện tại đã đủ. Không gửi thêm.";
+      return;
+    }
+
+    const block = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!block?.timestamp) throw new Error("Không đọc được block time.");
+
+    const expiry = BigInt(block.timestamp) + 3600n;
+    const transaction = {
+      from: account,
+      to: executionManager,
+      value: "0x0",
+      data: encodeFunctionData({
+        abi: demoBudgetABI,
+        functionName: "setBudget",
+        args: [demoDepositAsset, demoDepositAmount, expiry],
+      }),
+    };
+
+    await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    if (!window.confirm([
+      "Đặt budget DDEMO trên Fuji 43113",
+      `Owner: ${account}`,
+      `Manager: ${executionManager}`,
+      `Token: ${demoDepositAsset}`,
+      "Budget mới: 0.1 DDEMO, thay thế budget cũ.",
+      `Expiry: ${expiry}`,
+      "Thời hạn khoảng 1 giờ tính từ block vừa đọc.",
+      "Native value: 0 AVAX; trả phí gas riêng.",
+      "Chưa deposit hoặc chuyển DDEMO.",
+      "Mở Core để xem và ký?",
+    ].join("\n"))) {
+      output.textContent = "Đã hủy đặt budget. Chưa gửi.";
+      return;
+    }
+
+    await checkDemoWallet(provider);
+    const latest = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!latest?.timestamp ||
+        BigInt(latest.timestamp) + 60n >= expiry) {
+      throw new Error("Budget sắp hết hạn. Hãy bắt đầu lại.");
+    }
+    await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    localStorage.setItem(demoBudgetKey, JSON.stringify({
+      status: "submission_started",
+      expiry: expiry.toString(),
+    }));
+    submissionStarted = true;
+    output.textContent = "Đang chờ ký setBudget DDEMO trong Core...";
+
+    let hash;
+    try {
+      hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [transaction],
+      });
+    } catch (error) {
+      if (Number(error.code) === 4001) {
+        localStorage.removeItem(demoBudgetKey);
+        submissionStarted = false;
+      }
+      throw error;
+    }
+
+    localStorage.setItem(demoBudgetKey, JSON.stringify({
+      status: "submitted",
+      transaction_hash: hash,
+      expiry: expiry.toString(),
+    }));
+    output.textContent = [
+      "Đã gửi setBudget DDEMO; cần kiểm tra receipt.",
+      `Transaction hash: ${hash}`,
+      `Expiry: ${expiry}`,
+      "Chưa gọi executeDeposit.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (submissionStarted) {
+      output.textContent +=
+        "\nKiểm tra Activity trong Core trước khi thử lại.";
+    }
+  } finally {
+    demoBudgetBusy = false;
+    demoBudgetButton.disabled =
+      localStorage.getItem(demoBudgetKey) !== null;
+  }
+});
+
+  const demoDepositVault =
+  "0x896C05deae3d6e35021B12DD361401736Bb8aAda";
+const demoDepositAdapter =
+  "0x78b5aADB9a8570C7B4387F29119201AF53008b7D";
+
+const demoDepositABI = parseAbi([
+  "function executeDeposit(address token,uint256 amount,uint256 minSharesOut,uint256 deadline) returns (uint256 sharesOut)",
+  "function vaultConfigs(address token) view returns (address adapter,address shareToken)",
+  "function supportedTokens(address token) view returns (bool)",
+  "function remaining(address owner,address token) view returns (uint256)",
+]);
+
+const demoVaultABI = parseAbi([
+  "function asset() view returns (address)",
+  "function previewDeposit(uint256 assets) view returns (uint256 shares)",
+  "function maxDeposit(address receiver) view returns (uint256)",
+]);
+
+const demoAdapterABI = parseAbi([
+  "function manager() view returns (address)",
+  "function underlying() view returns (address)",
+  "function vault() view returns (address)",
+]);
+
+let demoDepositCandidate = null;
+
+document.querySelector("#simulate-ddemo-deposit")
+  .addEventListener("click", async () => {
+    const simulateButton =
+      document.querySelector("#simulate-ddemo-deposit");
+    simulateButton.disabled = true;
+    demoDepositCandidate = null;
+
+    try {
+      const provider = wallets.get(select.value);
+      if (!provider) throw new Error("Hãy chọn và kết nối Core.");
+      const account = await checkDemoWallet(provider);
+
+      const block = await provider.request({
+        method: "eth_getBlockByNumber",
+        params: ["latest", false],
+      });
+      if (!block?.number || !block.timestamp || !block.hash) {
+        throw new Error("Không đọc được block.");
+      }
+
+      async function read(to, abi, functionName, args = []) {
+        const raw = await provider.request({
+          method: "eth_call",
+          params: [{
+            to,
+            data: encodeFunctionData({ abi, functionName, args }),
+          }, block.number],
+        });
+        return decodeFunctionResult({ abi, functionName, data: raw });
+      }
+
+      const sameAddress = (a, b) =>
+        a.toLowerCase() === b.toLowerCase();
+
+      const route = await read(
+        executionManager, demoDepositABI, "vaultConfigs",
+        [demoDepositAsset]
+      );
+      if (
+        !sameAddress(route[0], demoDepositAdapter) ||
+        !sameAddress(route[1], demoDepositVault)
+      ) {
+        throw new Error("Route vault không khớp cấu hình.");
+      }
+
+      for (const token of [demoDepositAsset, demoDepositVault]) {
+        if (!await read(
+          executionManager, demoDepositABI, "supportedTokens", [token]
+        )) {
+          throw new Error("Underlying hoặc share token đang bị tắt.");
+        }
+      }
+
+      for (const [method, expected] of [
+        ["manager", executionManager],
+        ["underlying", demoDepositAsset],
+        ["vault", demoDepositVault],
+      ]) {
+        const actual = await read(
+          demoDepositAdapter, demoAdapterABI, method
+        );
+        if (!sameAddress(actual, expected)) {
+          throw new Error(`Adapter binding ${method} không khớp.`);
+        }
+      }
+
+      const underlying = await read(
+        demoDepositVault, demoVaultABI, "asset"
+      );
+      if (!sameAddress(underlying, demoDepositAsset)) {
+        throw new Error("Underlying của vault không đúng DDEMO.");
+      }
+
+      const balance = await read(
+        demoDepositAsset, demoApprovalABI, "balanceOf", [account]
+      );
+      const allowance = await read(
+        demoDepositAsset, demoApprovalABI, "allowance",
+        [account, executionManager]
+      );
+      const budget = await read(
+        executionManager, demoDepositABI, "remaining",
+        [account, demoDepositAsset]
+      );
+      const maximum = await read(
+        demoDepositVault, demoVaultABI, "maxDeposit", [account]
+      );
+      if (
+        balance < demoDepositAmount ||
+        allowance < demoDepositAmount ||
+        budget < demoDepositAmount ||
+        maximum < demoDepositAmount
+      ) {
+        throw new Error(
+          "Balance, allowance, budget hoặc maxDeposit chưa đủ."
+        );
+      }
+
+      const preview = await read(
+        demoDepositVault, demoVaultABI, "previewDeposit",
+        [demoDepositAmount]
+      );
+      if (preview <= 0n) throw new Error("Preview shares bằng zero.");
+
+      // Test harness uses a 1% tolerance for minimum shares.
+      const minimum = preview * 9900n / 10000n;
+      if (minimum <= 0n) throw new Error("Minimum shares bằng zero.");
+      const deadline = BigInt(block.timestamp) + 60n;
+
+      const transaction = {
+        from: account,
+        to: executionManager,
+        value: "0x0",
+        data: encodeFunctionData({
+          abi: demoDepositABI,
+          functionName: "executeDeposit",
+          args: [
+            demoDepositAsset, demoDepositAmount, minimum, deadline,
+          ],
+        }),
+      };
+
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [transaction, block.number],
+      });
+      const shares = decodeFunctionResult({
+        abi: demoDepositABI,
+        functionName: "executeDeposit",
+        data: raw,
+      });
+      if (shares < minimum) {
+        throw new Error("Simulation shares thấp hơn minimum.");
+      }
+
+      await checkDemoWallet(provider);
+      const recheckedBlock = await provider.request({
+        method: "eth_getBlockByNumber",
+        params: [block.number, false],
+      });
+      if (recheckedBlock?.hash !== block.hash) {
+        throw new Error("Block đã thay đổi. Hãy mô phỏng lại.");
+      }
+
+      demoDepositCandidate = {
+        provider,
+        transaction,
+        amount: demoDepositAmount,
+        preview,
+        minimum,
+        shares,
+        deadline,
+        createdAt: Date.now(),
+      };
+
+      output.textContent = [
+        "Deposit simulation thành công — CHƯA gửi giao dịch.",
+        `Owner/receiver: ${account}`,
+        "Chain: 43113",
+        `Manager: ${executionManager}`,
+        `Vault: ${demoDepositVault}`,
+        `Adapter: ${demoDepositAdapter}`,
+        `Block: ${BigInt(block.number)}`,
+        "Input: 0.1 DDEMO",
+        `Preview: ${formatUnits(preview, 18)} dvDDEMO`,
+        `Minimum: ${formatUnits(minimum, 18)} dvDDEMO`,
+        `Simulation shares: ${formatUnits(shares, 18)} dvDDEMO`,
+        `Deadline: ${deadline}`,
+        "Native value: 0 AVAX",
+        "DemoVault không có yield strategy; APY chưa có nguồn.",
+      ].join("\n");
+    } catch (error) {
+      output.textContent = error.message ?? String(error);
+    } finally {
+      simulateButton.disabled = false;
+    }
+  });
+
+  const demoDepositSendButton =
+  document.querySelector("#send-ddemo-deposit");
+const demoDepositSubmissionKey = "day09-ddemo-deposit-submission";
+const demoDepositIntentKey = "day09-ddemo-deposit-intent";
+let demoDepositSending = false;
+
+demoDepositSendButton.addEventListener("click", async () => {
+  if (demoDepositSending) return;
+  demoDepositSending = true;
+  demoDepositSendButton.disabled = true;
+  let submissionStarted = false;
+
+  try {
+    const saved = localStorage.getItem(demoDepositSubmissionKey);
+    if (saved) {
+      throw new Error("Deposit đã có lần gửi. Kiểm tra trước:\n" + saved);
+    }
+
+    const candidate = demoDepositCandidate;
+    demoDepositCandidate = null;
+    if (!candidate) throw new Error("Hãy mô phỏng deposit lại trước.");
+
+    const provider = wallets.get(select.value);
+    if (!provider || provider !== candidate.provider) {
+      throw new Error("Ví đã thay đổi. Hãy mô phỏng lại.");
+    }
+
+    async function checkCandidate() {
+      await checkDemoWallet(provider);
+      const block = await provider.request({
+        method: "eth_getBlockByNumber",
+        params: ["latest", false],
+      });
+      if (
+        !block?.timestamp ||
+        Date.now() - candidate.createdAt > 30_000 ||
+        BigInt(block.timestamp) + 20n >= candidate.deadline
+      ) {
+        throw new Error("Mô phỏng/deadline đã cũ. Hãy mô phỏng lại.");
+      }
+    }
+
+    async function reSimulate() {
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [candidate.transaction, "latest"],
+      });
+      const shares = decodeFunctionResult({
+        abi: demoDepositABI,
+        functionName: "executeDeposit",
+        data: raw,
+      });
+      if (shares !== candidate.shares || shares < candidate.minimum) {
+        throw new Error("Shares đã thay đổi. Hãy mô phỏng và xác nhận lại.");
+      }
+    }
+
+    await checkCandidate();
+    await reSimulate();
+
+    if (!window.confirm([
+      "Deposit DemoVault trên Fuji 43113",
+      `Owner/receiver: ${expectedAccount}`,
+      `Manager: ${executionManager}`,
+      `Vault: ${demoDepositVault}`,
+      "Chi: 0.1 DDEMO",
+      `Dự kiến nhận: ${formatUnits(candidate.shares, 18)} dvDDEMO`,
+      `Minimum: ${formatUnits(candidate.minimum, 18)} dvDDEMO`,
+      `Deadline: ${candidate.deadline}`,
+      "Native value: 0 AVAX; phí gas riêng.",
+      "Đây là vault demo, không có APY được xác minh.",
+      "Mở Core để xem và ký?",
+    ].join("\n"))) {
+      output.textContent = "Đã hủy deposit. Chưa gửi.";
+      return;
+    }
+
+    await checkCandidate();
+    await reSimulate();
+    await checkCandidate();
+
+    const expectedIntent = {
+      tx: {
+        chain_id: 43113,
+        from: candidate.transaction.from,
+        to: candidate.transaction.to,
+        value: "0",
+        data: candidate.transaction.data,
+      },
+      adapter_address: demoDepositAdapter,
+      vault_address: demoDepositVault,
+      asset_address: demoDepositAsset,
+      assets_raw: candidate.amount.toString(),
+      min_shares_raw: candidate.minimum.toString(),
+      deadline: Number(candidate.deadline),
+    };
+
+    localStorage.setItem(
+      demoDepositIntentKey, JSON.stringify(expectedIntent)
+    );
+    localStorage.setItem(demoDepositSubmissionKey, JSON.stringify({
+      status: "submission_started",
+    }));
+    submissionStarted = true;
+    output.textContent = "Đang chờ ký deposit trong Core...";
+
+    let hash;
+    try {
+      hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [candidate.transaction],
+      });
+    } catch (error) {
+      if (Number(error.code) === 4001) {
+        localStorage.removeItem(demoDepositSubmissionKey);
+        submissionStarted = false;
+      }
+      throw error;
+    }
+
+    localStorage.setItem(demoDepositSubmissionKey, JSON.stringify({
+      status: "submitted",
+      transaction_hash: hash,
+    }));
+
+    const evidence = {
+      transaction_hash: hash,
+      expected_intent: expectedIntent,
+    };
+    const blob = new Blob(
+      [JSON.stringify(evidence, null, 2)],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "deposit_fuji_expected_intent.json";
+    link.textContent = "Tải file intent deposit để xác minh";
+    output.textContent = [
+      "Đã gửi deposit; chưa kết luận thành công.",
+      `Transaction hash: ${hash}`,
+      "Cần kiểm tra receipt, events và shares.",
+      "Không gửi lại giao dịch này.",
+      "",
+    ].join("\n");
+    output.append(link);
+    link.click();
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (submissionStarted) {
+      output.textContent +=
+        "\nKiểm tra Activity trong Core trước khi thử lại.";
+    }
+  } finally {
+    demoDepositSending = false;
+    demoDepositSendButton.disabled =
+      localStorage.getItem(demoDepositSubmissionKey) !== null;
+  }
+});
+
+  const demoRedeemABI = parseAbi([
+  "function balanceOf(address owner) view returns (uint256)",
+  "function maxRedeem(address owner) view returns (uint256)",
+  "function previewRedeem(uint256 shares) view returns (uint256 assets)",
+  "function redeem(uint256 shares,address receiver,address owner) returns (uint256 assets)",
+]);
+
+let demoRedeemCandidate = null;
+
+document.querySelector("#simulate-demo-redeem")
+  .addEventListener("click", async () => {
+    const button = document.querySelector("#simulate-demo-redeem");
+    button.disabled = true;
+    demoRedeemCandidate = null;
+
+    try {
+      const provider = wallets.get(select.value);
+      if (!provider) throw new Error("Hãy chọn và kết nối Core.");
+      const account = await checkDemoWallet(provider);
+      const block = await provider.request({
+        method: "eth_getBlockByNumber",
+        params: ["latest", false],
+      });
+      if (!block?.number || !block.hash) {
+        throw new Error("Không đọc được block.");
+      }
+
+      async function read(functionName, args) {
+        const raw = await provider.request({
+          method: "eth_call",
+          params: [{
+            to: demoDepositVault,
+            data: encodeFunctionData({
+              abi: demoRedeemABI, functionName, args,
+            }),
+          }, block.number],
+        });
+        return decodeFunctionResult({
+          abi: demoRedeemABI, functionName, data: raw,
+        });
+      }
+
+      const shares = 100000000000000000n;
+      const balance = await read("balanceOf", [account]);
+      const maximum = await read("maxRedeem", [account]);
+      if (balance < shares || maximum < shares) {
+        throw new Error("Shares hoặc maxRedeem chưa đủ 0.1 dvDDEMO.");
+      }
+
+      const preview = await read("previewRedeem", [shares]);
+      if (preview <= 0n) throw new Error("Preview assets bằng zero.");
+
+      const transaction = {
+        from: account,
+        to: demoDepositVault,
+        value: "0x0",
+        data: encodeFunctionData({
+          abi: demoRedeemABI,
+          functionName: "redeem",
+          args: [shares, account, account],
+        }),
+      };
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [transaction, block.number],
+      });
+      const assets = decodeFunctionResult({
+        abi: demoRedeemABI,
+        functionName: "redeem",
+        data: raw,
+      });
+      if (assets !== preview) {
+        throw new Error("Simulation khác preview. Cần kiểm tra lại.");
+      }
+
+      await checkDemoWallet(provider);
+      const checked = await provider.request({
+        method: "eth_getBlockByNumber",
+        params: [block.number, false],
+      });
+      if (checked?.hash !== block.hash) {
+        throw new Error("Block thay đổi. Hãy mô phỏng lại.");
+      }
+
+      demoRedeemCandidate = {
+        provider, transaction, shares, assets,
+        createdAt: Date.now(),
+      };
+      output.textContent = [
+        "Redeem simulation thành công — CHƯA gửi.",
+        `Owner/receiver: ${account}`,
+        "Chain: 43113",
+        `Vault: ${demoDepositVault}`,
+        `Block: ${BigInt(block.number)}`,
+        "Đốt: 0.1 dvDDEMO",
+        `Dự kiến nhận: ${formatUnits(assets, 18)} DDEMO`,
+        "Gọi trực tiếp vault, không qua Manager.",
+        "Không cần approve shares vì caller chính là owner.",
+        "Native value: 0 AVAX; phí gas riêng khi gửi.",
+      ].join("\n");
+    } catch (error) {
+      output.textContent = error.message ?? String(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  const demoRedeemSendButton =
+  document.querySelector("#send-demo-redeem");
+const demoRedeemSubmissionKey = "day09-demo-redeem-submission";
+let demoRedeemSending = false;
+
+demoRedeemSendButton.addEventListener("click", async () => {
+  if (demoRedeemSending) return;
+  demoRedeemSending = true;
+  demoRedeemSendButton.disabled = true;
+  let submissionStarted = false;
+
+  try {
+    const saved = localStorage.getItem(demoRedeemSubmissionKey);
+    if (saved) {
+      throw new Error("Redeem đã có lần gửi. Kiểm tra trước:\n" + saved);
+    }
+
+    const candidate = demoRedeemCandidate;
+    demoRedeemCandidate = null;
+    if (!candidate) throw new Error("Hãy mô phỏng redeem lại trước.");
+
+    const provider = wallets.get(select.value);
+    if (!provider || provider !== candidate.provider) {
+      throw new Error("Ví đã thay đổi. Hãy mô phỏng lại.");
+    }
+
+    async function checkCandidate() {
+      await checkDemoWallet(provider);
+      if (Date.now() - candidate.createdAt > 30_000) {
+        throw new Error("Mô phỏng đã cũ. Hãy mô phỏng lại.");
+      }
+    }
+
+    async function reSimulate() {
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [candidate.transaction, "latest"],
+      });
+      const assets = decodeFunctionResult({
+        abi: demoRedeemABI,
+        functionName: "redeem",
+        data: raw,
+      });
+      if (assets <= 0n || assets !== candidate.assets) {
+        throw new Error("Assets nhận về đã đổi. Mô phỏng và xác nhận lại.");
+      }
+    }
+
+    await checkCandidate();
+    await reSimulate();
+
+    if (!window.confirm([
+      "Redeem DemoVault trên Fuji 43113",
+      `Owner/receiver: ${expectedAccount}`,
+      `Vault đích: ${demoDepositVault}`,
+      "Đốt: 0.1 dvDDEMO",
+      `Dự kiến nhận: ${formatUnits(candidate.assets, 18)} DDEMO`,
+      "Gọi trực tiếp vault, không qua Manager.",
+      "Native value: 0 AVAX; phí gas riêng.",
+      "Hàm redeem này không có minAssets hoặc deadline on-chain.",
+      "Số nhận được có thể thay đổi trước khi mined.",
+      "Mở Core để xem và ký?",
+    ].join("\n"))) {
+      output.textContent = "Đã hủy redeem. Chưa gửi.";
+      return;
+    }
+
+    await checkCandidate();
+    await reSimulate();
+    await checkCandidate();
+
+    const intent = {
+      tx: {
+        chain_id: 43113,
+        from: candidate.transaction.from,
+        to: candidate.transaction.to,
+        value: "0",
+        data: candidate.transaction.data,
+      },
+      vault_address: demoDepositVault,
+      asset_address: demoDepositAsset,
+      owner_address: expectedAccount,
+      receiver_address: expectedAccount,
+      shares_raw: candidate.shares.toString(),
+      preview_assets_raw: candidate.assets.toString(),
+    };
+
+    localStorage.setItem(
+      "day09-demo-redeem-intent", JSON.stringify(intent)
+    );
+    localStorage.setItem(demoRedeemSubmissionKey, JSON.stringify({
+      status: "submission_started",
+    }));
+    submissionStarted = true;
+    output.textContent = "Đang chờ ký redeem trong Core...";
+
+    let hash;
+    try {
+      hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [candidate.transaction],
+      });
+    } catch (error) {
+      if (Number(error.code) === 4001) {
+        localStorage.removeItem(demoRedeemSubmissionKey);
+        submissionStarted = false;
+      }
+      throw error;
+    }
+
+    localStorage.setItem(demoRedeemSubmissionKey, JSON.stringify({
+      status: "submitted",
+      transaction_hash: hash,
+    }));
+
+    const blob = new Blob([JSON.stringify({
+      transaction_hash: hash,
+      expected_intent: intent,
+    }, null, 2)], { type: "application/json" });
+
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "redeem_fuji_expected_intent.json";
+    link.textContent = "Tải intent redeem";
+
+    output.textContent = [
+      "Đã gửi redeem; cần kiểm tra receipt và số dư.",
+      `Transaction hash: ${hash}`,
+      "Chưa kết luận thành công. Không gửi lại.",
+      "",
+    ].join("\n");
+    output.append(link);
+    link.click();
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (submissionStarted) {
+      output.textContent +=
+        "\nKiểm tra Activity trong Core trước khi thử lại.";
+    }
+  } finally {
+    demoRedeemSending = false;
+    demoRedeemSendButton.disabled =
+      localStorage.getItem(demoRedeemSubmissionKey) !== null;
+  }
+});
   </script>
 </body>
 </html>
