@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"slices"
 	"time"
@@ -110,6 +111,7 @@ func (p *SwapPreparer) PrepareSwap(
 	}
 
 	slippage := intent.SlippageBps
+	log.Printf("prepare_swap input: tokenIn=%s amountInRaw=%s", in.Address, amount.String())
 	quote, err := p.quoter.QuoteExactInput(ctx, SwapQuoteRequest{
 		TokenPath:   []Asset{in, out},
 		AmountInRaw: amount.String(),
