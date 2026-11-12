@@ -965,7 +965,7 @@ func TestAgentPreparesWriteWithoutExecutingTool(t *testing.T) {
 				ToolCalls: []ToolCall{
 					{
 						ID:   "swap-call-001",
-						Name: "prepare_swap",
+						Name: "test_write_action",
 						Arguments: json.RawMessage(`{
 							"chain_id": 43113,
 							"amount": "1",
@@ -984,7 +984,7 @@ func TestAgentPreparesWriteWithoutExecutingTool(t *testing.T) {
 		NewInMemoryStore(),
 		NewStaticPolicyEngine(
 			nil,
-			[]string{"prepare_swap"},
+			[]string{"test_write_action"},
 		),
 	)
 	if err != nil {
@@ -1022,9 +1022,9 @@ func TestAgentPreparesWriteWithoutExecutingTool(t *testing.T) {
 		)
 	}
 
-	if output.PendingAction.ToolName != "prepare_swap" {
+	if output.PendingAction.ToolName != "test_write_action" {
 		t.Fatalf(
-			"tool name = %q, want prepare_swap",
+			"tool name = %q, want test_write_action",
 			output.PendingAction.ToolName,
 		)
 	}
