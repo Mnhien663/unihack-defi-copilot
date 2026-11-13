@@ -16,6 +16,7 @@ import (
 	"unihack-backend/internal/tools"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/gofiber/fiber/v2/middleware/timeout"
@@ -359,12 +360,18 @@ func main() {
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: handlers.ErrorHandler,
+		BodyLimit:    32 * 1024, // 32 KiB
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 35 * time.Second,
 	})
 
 	app.Use(requestid.New())
 	app.Use(recover.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "http://localhost:3000",
+		AllowMethods: "GET,POST,OPTIONS",
+		AllowHeaders: "Content-Type,Idempotency-Key",
+	}))
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{

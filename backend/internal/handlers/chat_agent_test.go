@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1338,5 +1341,74 @@ func TestChatHandlerReturnsStructuredAgentError(t *testing.T) {
 	}
 	if body.PendingAction != nil {
 		t.Fatal("agent error must not return a pending action")
+	}
+}
+
+func TestChatRejectsOversizedBodyBeforeAgent(t *testing.T) {
+	const bodyLimit = 32 * 1024
+
+	handler, err := NewChatHandler(&mockChatRunner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var routeCalls atomic.Int32
+	app := fiber.New(fiber.Config{
+		BodyLimit:             bodyLimit,
+		ErrorHandler:          ErrorHandler,
+		DisableStartupMessage: true,
+	})
+	app.Use(requestid.New())
+	app.Post("/api/v1/chat", func(c *fiber.Ctx) error {
+		routeCalls.Add(1)
+		return handler(c)
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on loopback: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		_ = app.Listener(listener)
+	}()
+
+	body := `{
+		"session_id": "body-limit-test",
+		"wallet_address": "0x0000000000000000000000000000000000000001",
+		"chain_id": 43113,
+		"message": "Hello",
+		"locale": "en"
+	}`
+	body += strings.Repeat(" ", bodyLimit+1-len(body))
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	res, err := client.Post(
+		"http://"+listener.Addr().String()+"/api/v1/chat",
+		fiber.MIMEApplicationJSON,
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("send oversized request: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", res.StatusCode)
+	}
+	if calls := routeCalls.Load(); calls != 0 {
+		t.Fatalf("chat handler calls = %d, want 0", calls)
+	}
+
+	var responseBody ChatResponse
+	if err := json.NewDecoder(res.Body).Decode(&responseBody); err != nil {
+		t.Fatalf("decode 413 response: %v", err)
+	}
+	if responseBody.Error == nil || responseBody.Error.Code != "REQUEST_BODY_TOO_LARGE" {
+		t.Fatalf("error = %+v, want REQUEST_BODY_TOO_LARGE", responseBody.Error)
+	}
+	if responseBody.PendingAction != nil {
+		t.Fatal("oversized request must not return a pending action")
 	}
 }
