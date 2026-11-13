@@ -257,3 +257,31 @@ func TestNativeBalanceToolReturnsChainError(t *testing.T) {
 		)
 	}
 }
+
+func TestNativeBalanceToolRejectsMalformedJSON(t *testing.T) {
+	client := &mockChainClient{}
+	tool, err := NewNativeBalanceTool(client)
+	if err != nil {
+		t.Fatalf("NewNativeBalanceTool() returned error: %v", err)
+	}
+
+	// The closing brace is intentionally missing.
+	args := json.RawMessage(`{
+		"wallet_address": "0x0000000000000000000000000000000000000001",
+		"chain_id": 43113
+	`)
+
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute() returned Go error: %v; want a structured tool error", err)
+	}
+	if result.Error == nil || result.Error.Code != "INVALID_TOOL_ARGUMENTS" {
+		t.Fatalf("tool error = %+v, want INVALID_TOOL_ARGUMENTS", result.Error)
+	}
+	if client.callCount != 0 {
+		t.Fatalf("chain client calls = %d, want 0", client.callCount)
+	}
+	if len(result.Data) != 0 && string(result.Data) != "null" {
+		t.Fatalf("malformed arguments must not return balance data: %s", result.Data)
+	}
+}

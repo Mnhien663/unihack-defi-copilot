@@ -235,6 +235,15 @@ func handleChat(
 				"PENDING_SWAP_UNAVAILABLE",
 				"the swap action associated with this Idempotency-Key is no longer pending or has expired",
 			)
+
+		case errors.Is(err, ai.ErrLLMRateLimited):
+			return sendError(
+				c,
+				fiber.StatusServiceUnavailable,
+				"LLM_RATE_LIMITED",
+				"the AI provider is temporarily rate limited; try again later",
+			)
+
 		default:
 			return sendError(
 				c,

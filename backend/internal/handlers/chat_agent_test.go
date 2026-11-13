@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -1241,5 +1242,101 @@ func TestPendingSwapReceiptHandlerRefreshUsesStoredHash(t *testing.T) {
 					rpcCalls, store.finalizeCalls, store.finalizedHash)
 			}
 		})
+	}
+}
+
+func TestChatHandlerReturnsLLMRateLimited(t *testing.T) {
+	runner := &mockChatRunner{err: ai.ErrLLMRateLimited}
+	handler, err := NewChatHandler(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := fiber.New()
+	app.Use(requestid.New())
+	app.Post("/api/v1/chat", handler)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/api/v1/chat", strings.NewReader(`{
+		"session_id": "rate-limit-test",
+		"wallet_address": "0x0000000000000000000000000000000000000001",
+		"chain_id": 43113,
+		"message": "Show my AVAX balance",
+		"locale": "en"
+	}`))
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	var body ChatResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	if res.StatusCode != fiber.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; error = %+v", res.StatusCode, body.Error)
+	}
+	if body.Error == nil || body.Error.Code != "LLM_RATE_LIMITED" {
+		t.Fatalf("error = %+v, want LLM_RATE_LIMITED", body.Error)
+	}
+	if runner.receivedCall != 1 || body.RequestID == "" ||
+		body.RequestID != runner.received.RequestID {
+		t.Fatal("expected one agent call and matching non-empty request IDs")
+	}
+	if body.PendingAction != nil {
+		t.Fatal("rate-limited response must not contain a pending action")
+	}
+}
+
+func TestChatHandlerReturnsStructuredAgentError(t *testing.T) {
+	const internalError = "database unavailable: internal test detail"
+
+	runner := &mockChatRunner{err: errors.New(internalError)}
+	handler, err := NewChatHandler(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := fiber.New()
+	app.Use(requestid.New())
+	app.Post("/api/v1/chat", handler)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/api/v1/chat", strings.NewReader(`{
+		"session_id": "db-unavailable-test",
+		"wallet_address": "0x0000000000000000000000000000000000000001",
+		"chain_id": 43113,
+		"message": "Show my AVAX balance",
+		"locale": "en"
+	}`))
+	req.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	var body ChatResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if res.StatusCode != fiber.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", res.StatusCode)
+	}
+	if body.Error == nil || body.Error.Code != "AGENT_ERROR" {
+		t.Fatalf("error = %+v, want AGENT_ERROR", body.Error)
+	}
+	if body.Error.Message != "the AI agent could not complete the request" {
+		t.Fatalf("unexpected public error message: %q", body.Error.Message)
+	}
+	if runner.receivedCall != 1 || body.RequestID == "" ||
+		body.RequestID != runner.received.RequestID {
+		t.Fatal("expected one agent call and matching non-empty request IDs")
+	}
+	if body.PendingAction != nil {
+		t.Fatal("agent error must not return a pending action")
 	}
 }

@@ -3,7 +3,11 @@ package ai
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"google.golang.org/genai"
 )
 
 func TestNewGeminiClientRejectsMissingAPIKey(t *testing.T) {
@@ -106,5 +110,45 @@ func TestGeminiClientHonorsCancelledContext(t *testing.T) {
 			"expected context.Canceled, got %v",
 			err,
 		)
+	}
+}
+
+func TestGeminiCompleteClassifiesHTTP429(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{
+			"error": {
+				"code": 429,
+				"message": "test quota exceeded",
+				"status": "RESOURCE_EXHAUSTED"
+			}
+		}`))
+	}))
+	defer upstream.Close()
+
+	sdk, err := genai.NewClient(t.Context(), &genai.ClientConfig{
+		APIKey:     "test-api-key",
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: upstream.Client(),
+		HTTPOptions: genai.HTTPOptions{
+			BaseURL: upstream.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create Gemini SDK client: %v", err)
+	}
+
+	client := &GeminiClient{
+		client: sdk,
+		model:  "gemini-3-flash-preview",
+		logger: testLogger(),
+	}
+
+	_, err = client.Complete(t.Context(), LLMRequest{
+		Messages: []Message{{Role: RoleUser, Content: "Hello"}},
+	})
+	if !errors.Is(err, ErrLLMRateLimited) || !errors.Is(err, ErrGeminiRequestFailed) {
+		t.Fatalf("Complete() error = %v, want both Gemini failure and rate-limit errors", err)
 	}
 }
