@@ -38,6 +38,10 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 			errorCode = "REQUEST_TIMEOUT"
 			errorMessage = "request timed out"
 
+		case fiber.StatusRequestEntityTooLarge:
+			errorCode = "REQUEST_BODY_TOO_LARGE"
+			errorMessage = "request body exceeds the allowed size"
+
 		default:
 			errorCode = "HTTP_ERROR"
 		}
