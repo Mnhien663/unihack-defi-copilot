@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -147,6 +148,12 @@ func (c *OpenAIClient) Complete(
 			"error_type",
 			fmt.Sprintf("%T", err),
 		)
+
+		var apiErr *openai.Error
+		if errors.As(err, &apiErr) && apiErr != nil &&
+			apiErr.StatusCode == http.StatusTooManyRequests {
+			return LLMResponse{}, fmt.Errorf("%w: %w", ErrOpenAIRequestFailed, ErrLLMRateLimited)
+		}
 
 		return LLMResponse{}, fmt.Errorf(
 			"%w: %T",

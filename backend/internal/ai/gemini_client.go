@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ var (
 	ErrMissingGeminiModel  = errors.New("GEMINI_MODEL is not configured")
 	ErrGeminiRequestFailed = errors.New("Gemini request failed")
 	ErrEmptyGeminiResponse = errors.New("Gemini returned an empty response")
+	ErrLLMRateLimited      = errors.New("LLM provider rate limited")
 )
 
 type GeminiConfig struct {
@@ -208,6 +210,14 @@ func (c *GeminiClient) Complete(
 			"error",
 			safeError,
 		)
+
+		var apiErr genai.APIError
+		var apiErrPtr *genai.APIError
+		if (errors.As(err, &apiErr) && apiErr.Code == http.StatusTooManyRequests) ||
+			(errors.As(err, &apiErrPtr) && apiErrPtr != nil &&
+				apiErrPtr.Code == http.StatusTooManyRequests) {
+			return LLMResponse{}, fmt.Errorf("%w: %w", ErrGeminiRequestFailed, ErrLLMRateLimited)
+		}
 
 		return LLMResponse{}, fmt.Errorf(
 			"%w: %T",

@@ -1118,3 +1118,53 @@ func TestAgentRejectsMixedReadWriteBatchBeforeExecution(
 		)
 	}
 }
+
+type unavailableSessionTestStore struct {
+	*InMemoryStore
+	err error
+}
+
+func (s *unavailableSessionTestStore) EnsureSession(
+	_ context.Context,
+	_ SessionMetadata,
+) error {
+	return s.err
+}
+
+func TestAgentStopsWhenSessionStoreUnavailable(t *testing.T) {
+	dbErr := errors.New("database unavailable")
+	store := &unavailableSessionTestStore{
+		InMemoryStore: NewInMemoryStore(),
+		err:           dbErr,
+	}
+	llm := NewMockLLMClient()
+	registry := &mockToolRegistry{}
+	policy := NewStaticPolicyEngine(nil, nil)
+
+	agent, err := NewAgent(llm, registry, store, policy)
+	if err != nil {
+		t.Fatalf("NewAgent() returned error: %v", err)
+	}
+
+	got, err := agent.Run(context.Background(), AgentInput{
+		RequestID:     "db-unavailable-request",
+		SessionID:     "db-unavailable-session",
+		WalletAddress: testWalletAddress,
+		ChainID:       FujiChainID,
+		Message:       "Show my AVAX balance",
+		Locale:        "en",
+	})
+
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("Run() error = %v, want database error", err)
+	}
+	if calls := len(llm.RecordedRequests()); calls != 0 {
+		t.Fatalf("LLM calls = %d, want 0", calls)
+	}
+	if registry.callCount != 0 {
+		t.Fatalf("tool calls = %d, want 0", registry.callCount)
+	}
+	if got.PendingAction != nil {
+		t.Fatal("database error must not return a pending action")
+	}
+}
