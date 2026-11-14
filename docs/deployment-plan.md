@@ -196,6 +196,53 @@ Pending:
 - Public hosting, HTTPS and external frontend connectivity remain optional
   and have not been verified.
 
+## Isolated clean-clone smoke
+
+This configuration tests backend/database startup without provider keys.
+It does not start the frontend or exercise live blockchain flows.
+Run from the repository root:
+
+```bash
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml config --quiet
+
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml \
+  up -d --build backend
+
+curl -sS http://localhost:18080/health
+```
+
+The smoke stack uses a separate database volume and no fixed container
+names. PostgreSQL is not published to the host. Backend is available
+only at 127.0.0.1:18080.
+
+The database password in this file is a public local-test value.
+Do not reuse it for production or add real secrets to this file.
+
+Backend startup requires PostgreSQL to be healthy and the migration
+service to complete successfully.
+
+To verify persistence, create a chat session, record its message IDs,
+then recreate the stack without deleting its volume:
+
+```bash
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml down
+
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml \
+  up -d backend
+```
+
+Query the same session and confirm its records remain unchanged.
+Migration reruns should succeed without changing an up-to-date schema.
+
+To stop the smoke stack while retaining its database:
+
+```bash
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml down
+```
+
+Use the same project name and configuration file for every command.
+Do not run duplicate smoke stacks from multiple clones simultaneously.
+
 ## References
 
 - https://developers.openai.com/api/reference/overview
