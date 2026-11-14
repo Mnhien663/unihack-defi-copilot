@@ -1,0 +1,17 @@
+.env
+.env.*
+**/.env
+**/.env.*
+
+secrets/
+**/secrets/
+*.pem
+**/*.pem
+*.key
+**/*.key
+
+server.exe
+main
+coverage/
+*.test
+*.out
