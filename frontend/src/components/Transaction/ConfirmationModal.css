@@ -1,0 +1,159 @@
+
+/* Background overlay */
+.confirmation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+/* Modal container */
+.confirmation-modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+
+  padding: 28px;
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
+  color: #172033;
+}
+
+/* Header */
+.confirmation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.confirmation-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #172033;
+}
+
+/* Close X button */
+.confirmation-header button {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+
+  border: none;
+  border-radius: 10px;
+  background: #f1f5f9;
+
+  font-size: 24px;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.confirmation-header button:hover {
+  background: #e2e8f0;
+}
+
+/* MOCK warning */
+.confirmation-modal > p {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Reuse TransactionCard */
+.confirmation-modal .transaction-review {
+  margin: 0 0 20px;
+  padding: 18px;
+  box-shadow: none;
+}
+
+/* Confirm / Reject buttons */
+.confirmation-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.confirmation-actions button {
+  padding: 13px 16px;
+
+  border: none;
+  border-radius: 10px;
+
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Reject */
+.confirmation-actions button:first-child {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* Confirm */
+.confirmation-actions button:last-child {
+  background: #cf4b48;
+  color: #ffffff;
+}
+
+/* Disabled while using MOCK */
+.confirmation-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Close Preview button */
+.confirmation-modal > button:last-child {
+  display: block;
+  width: 100%;
+  padding: 12px;
+
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+
+  color: #64748b;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.confirmation-modal > button:last-child:hover {
+  background: #f8fafc;
+}
+
+/* Keyboard focus */
+.confirmation-modal button:focus-visible {
+  outline: 2px solid #cf4b48;
+  outline-offset: 3px;
+}
+
+/* Smaller screens */
+@media (max-width: 600px) {
+  .confirmation-modal {
+    padding: 18px;
+    max-height: 95vh;
+  }
+
+  .confirmation-header h2 {
+    font-size: 19px;
+  }
+}
