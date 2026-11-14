@@ -39,7 +39,7 @@ console.log("Block:", block.number);
 console.log("Wrapped AVAX:", wrapped);
 console.log("Factory:", factoryAddress);
 
-const amountIn = ethers.parseEther("0.001");
+const amountIn = ethers.parseEther("0.08");
 
 for (const token of [
   {
@@ -84,7 +84,7 @@ for (const token of [
         options
       );
 
-      console.log("AVAX input:", "0.001");
+      console.log("AVAX input:", ethers.formatEther(amountIn));
       console.log("Input left raw:", quote.amountInLeft.toString());
       console.log("Output raw:", quote.amountOut.toString());
       console.log(
