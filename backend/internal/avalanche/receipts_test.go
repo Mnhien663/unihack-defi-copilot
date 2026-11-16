@@ -5,9 +5,11 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -458,5 +460,672 @@ func TestReceiptReaderHonorsCancellation(t *testing.T) {
 	}
 	if result.Status != "" || client.receiptCalls != 0 {
 		t.Fatal("cancelled request must not return a status or read receipt")
+	}
+}
+
+func validReceiptSwapIntent(t *testing.T) ExpectedSwapIntent {
+	t.Helper()
+
+	builder, err := NewSwapTxBuilder()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	intent := ExpectedSwapIntent{
+		Tx: UnsignedTx{
+			ChainID: uint64(FujiChainID),
+			From:    "0x0000000000000000000000000000000000000001",
+			To:      fujiExecutionManager,
+			Value:   "0",
+		},
+		AdapterAddress:  "0xD5cae0dF0f11a0Cf9818aCc47b11ce183b0E8AF5",
+		TokenInAddress:  lfjFujiTokenX,
+		TokenOutAddress: lfjFujiTokenY,
+		AmountInRaw:     "1000000",
+		MinAmountOutRaw: "990000",
+		// Fixed historical deadline: receipt verification must not
+		// reject a mined transaction based on today's wall clock.
+		Deadline: 1_700_000_000,
+	}
+
+	data, err := builder.abi.Pack(
+		"executeSwap",
+		common.HexToAddress(intent.TokenInAddress),
+		common.HexToAddress(intent.TokenOutAddress),
+		big.NewInt(1_000_000),
+		big.NewInt(990_000),
+		new(big.Int).SetUint64(intent.Deadline),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	intent.Tx.Data = hexutil.Encode(data)
+	return intent
+}
+
+func TestValidateExpectedSwapIntent(t *testing.T) {
+	t.Run("accepts consistent intent with historical deadline", func(t *testing.T) {
+		intent := validReceiptSwapIntent(t)
+
+		data, err := validateExpectedSwapIntent(intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hexutil.Encode(data) != intent.Tx.Data {
+			t.Fatal("validated calldata differs from expected calldata")
+		}
+	})
+
+	tests := []struct {
+		name   string
+		mutate func(*ExpectedSwapIntent)
+	}{
+		{"wrong chain", func(i *ExpectedSwapIntent) {
+			i.Tx.ChainID = 43114
+		}},
+		{"invalid owner", func(i *ExpectedSwapIntent) {
+			i.Tx.From = "invalid"
+		}},
+		{"zero owner", func(i *ExpectedSwapIntent) {
+			i.Tx.From = (common.Address{}).Hex()
+		}},
+		{"manager as owner", func(i *ExpectedSwapIntent) {
+			i.Tx.From = fujiExecutionManager
+		}},
+		{"wrong manager", func(i *ExpectedSwapIntent) {
+			i.Tx.To = i.Tx.From
+		}},
+		{"wrong adapter", func(i *ExpectedSwapIntent) {
+			i.AdapterAddress = i.Tx.From
+		}},
+		{"same input and output", func(i *ExpectedSwapIntent) {
+			i.TokenOutAddress = i.TokenInAddress
+		}},
+		{"nonzero native value", func(i *ExpectedSwapIntent) {
+			i.Tx.Value = "1"
+		}},
+		{"zero input", func(i *ExpectedSwapIntent) {
+			i.AmountInRaw = "0"
+		}},
+		{"changed input", func(i *ExpectedSwapIntent) {
+			i.AmountInRaw = "1000001"
+		}},
+		{"changed minimum output", func(i *ExpectedSwapIntent) {
+			i.MinAmountOutRaw = "990001"
+		}},
+		{"changed deadline", func(i *ExpectedSwapIntent) {
+			i.Deadline++
+		}},
+		{"zero deadline", func(i *ExpectedSwapIntent) {
+			i.Deadline = 0
+		}},
+		{"malformed calldata", func(i *ExpectedSwapIntent) {
+			i.Tx.Data = "0xzz"
+		}},
+		{"trailing calldata", func(i *ExpectedSwapIntent) {
+			i.Tx.Data += "00"
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			intent := validReceiptSwapIntent(t)
+			tt.mutate(&intent)
+
+			_, err := validateExpectedSwapIntent(intent)
+			if !errors.Is(err, ErrInvalidSwapIntent) {
+				t.Fatalf("want ErrInvalidSwapIntent, got %v", err)
+			}
+		})
+	}
+}
+
+func TestMatchSwapTransaction(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*ReceiptResult)
+		wantErr bool
+	}{
+		{
+			name: "matching transaction",
+		},
+		{
+			name: "wrong chain",
+			mutate: func(r *ReceiptResult) {
+				r.ChainID = 43114
+			},
+			wantErr: true,
+		},
+		{
+			name: "different sender",
+			mutate: func(r *ReceiptResult) {
+				r.FromAddress =
+					"0x0000000000000000000000000000000000000002"
+			},
+			wantErr: true,
+		},
+		{
+			name: "malformed sender",
+			mutate: func(r *ReceiptResult) {
+				r.FromAddress = "invalid"
+			},
+			wantErr: true,
+		},
+		{
+			name: "different destination",
+			mutate: func(r *ReceiptResult) {
+				address :=
+					"0x0000000000000000000000000000000000000002"
+				r.ToAddress = &address
+			},
+			wantErr: true,
+		},
+		{
+			name: "contract creation",
+			mutate: func(r *ReceiptResult) {
+				r.ToAddress = nil
+			},
+			wantErr: true,
+		},
+		{
+			name: "nonzero native value",
+			mutate: func(r *ReceiptResult) {
+				r.ValueRaw = "1"
+			},
+			wantErr: true,
+		},
+		{
+			name: "malformed native value",
+			mutate: func(r *ReceiptResult) {
+				r.ValueRaw = "invalid"
+			},
+			wantErr: true,
+		},
+		{
+			name: "different function selector",
+			mutate: func(r *ReceiptResult) {
+				r.Input = "0x00000000" + r.Input[10:]
+			},
+			wantErr: true,
+		},
+		{
+			name: "changed deadline in calldata",
+			mutate: func(r *ReceiptResult) {
+				data, err := hexutil.Decode(r.Input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data[len(data)-1] ^= 1
+				r.Input = hexutil.Encode(data)
+			},
+			wantErr: true,
+		},
+		{
+			name: "extra calldata",
+			mutate: func(r *ReceiptResult) {
+				r.Input += "00"
+			},
+			wantErr: true,
+		},
+		{
+			name: "malformed calldata",
+			mutate: func(r *ReceiptResult) {
+				r.Input = "0xzz"
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			intent := validReceiptSwapIntent(t)
+			to := intent.Tx.To
+
+			actual := ReceiptResult{
+				ChainID:     intent.Tx.ChainID,
+				FromAddress: intent.Tx.From,
+				ToAddress:   &to,
+				ValueRaw:    intent.Tx.Value,
+				Input:       intent.Tx.Data,
+			}
+
+			if tt.mutate != nil {
+				tt.mutate(&actual)
+			}
+
+			err := matchSwapTransaction(intent, actual)
+			if tt.wantErr {
+				if !errors.Is(err, ErrTransactionIntentMismatch) {
+					t.Fatalf(
+						"want ErrTransactionIntentMismatch, got %v",
+						err,
+					)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func swapReceiptFixture(
+	t *testing.T,
+) (ExpectedSwapIntent, *receiptRPCStub) {
+	t.Helper()
+
+	intent := validReceiptSwapIntent(t)
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Tx.From = crypto.PubkeyToAddress(key.PublicKey).Hex()
+
+	data, err := hexutil.Decode(intent.Tx.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := common.HexToAddress(intent.Tx.To)
+
+	unsigned := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   big.NewInt(FujiChainID),
+		Nonce:     1,
+		GasTipCap: big.NewInt(1),
+		GasFeeCap: big.NewInt(2),
+		Gas:       500_000,
+		To:        &to,
+		Value:     big.NewInt(0),
+		Data:      data,
+	})
+
+	tx, err := types.SignTx(
+		unsigned,
+		types.LatestSignerForChainID(big.NewInt(FujiChainID)),
+		key,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	builder, err := NewSwapTxBuilder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := builder.abi.Events["SwapExecuted"]
+
+	eventData, err := event.Inputs.NonIndexed().Pack(
+		common.HexToAddress(intent.AdapterAddress),
+		big.NewInt(1_000_000),
+		big.NewInt(999_900),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blockHash := common.HexToHash("0x1234")
+	receipt := &types.Receipt{
+		TxHash:      tx.Hash(),
+		BlockNumber: big.NewInt(12345),
+		BlockHash:   blockHash,
+		Status:      types.ReceiptStatusSuccessful,
+		Logs: []*types.Log{
+			{
+				Address: to,
+				Topics: []common.Hash{
+					event.ID,
+					common.BytesToHash(
+						common.HexToAddress(intent.Tx.From).Bytes(),
+					),
+					common.BytesToHash(
+						common.HexToAddress(intent.TokenInAddress).Bytes(),
+					),
+					common.BytesToHash(
+						common.HexToAddress(intent.TokenOutAddress).Bytes(),
+					),
+				},
+				Data:        eventData,
+				BlockNumber: 12345,
+				TxHash:      tx.Hash(),
+				BlockHash:   blockHash,
+			},
+		},
+	}
+
+	return intent, &receiptRPCStub{
+		tx:      tx,
+		receipt: receipt,
+	}
+}
+
+func TestVerifyTx(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutate       func(*ExpectedSwapIntent, *receiptRPCStub)
+		wantStatus   TransactionStatus
+		wantVerified bool
+		wantErr      error
+	}{
+		{
+			name:         "successful matching swap",
+			wantStatus:   TransactionStatusSucceeded,
+			wantVerified: true,
+		},
+		{
+			name: "pending is not verified",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.pending = true
+				s.receipt = nil
+				s.receiptErr = ethereum.NotFound
+			},
+			wantStatus: TransactionStatusPending,
+		},
+		{
+			name: "reverted is not verified",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.receipt.Status = types.ReceiptStatusFailed
+				s.receipt.Logs = nil
+			},
+			wantStatus: TransactionStatusFailed,
+		},
+		{
+			name: "different confirmed owner",
+			mutate: func(i *ExpectedSwapIntent, _ *receiptRPCStub) {
+				i.Tx.From =
+					"0x0000000000000000000000000000000000000002"
+			},
+			wantErr: ErrTransactionIntentMismatch,
+		},
+		{
+			name: "missing swap event",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.receipt.Logs = nil
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "event emitted by another contract",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.receipt.Logs[0].Address =
+					common.HexToAddress(lfjFujiRouter)
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "wrong event owner",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.receipt.Logs[0].Topics[1] = common.HexToHash("0x02")
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "wrong event adapter",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				// First ABI word contains the adapter address.
+				s.receipt.Logs[0].Data[31] ^= 1
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "wrong event input amount",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				// Second ABI word contains amountIn.
+				s.receipt.Logs[0].Data[63] ^= 1
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "output below confirmed minimum",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				// Third ABI word contains amountOut.
+				big.NewInt(989_999).FillBytes(
+					s.receipt.Logs[0].Data[64:96],
+				)
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "output exactly at confirmed minimum",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				big.NewInt(990_000).FillBytes(
+					s.receipt.Logs[0].Data[64:96],
+				)
+			},
+			wantStatus:   TransactionStatusSucceeded,
+			wantVerified: true,
+		},
+		{
+			name: "duplicate swap events",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				duplicate := *s.receipt.Logs[0]
+				duplicate.Index = 1
+				s.receipt.Logs = append(s.receipt.Logs, &duplicate)
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "truncated event data",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.receipt.Logs[0].Data =
+					s.receipt.Logs[0].Data[:95]
+			},
+			wantErr: ErrSwapEventMismatch,
+		},
+		{
+			name: "RPC timeout stays an error",
+			mutate: func(_ *ExpectedSwapIntent, s *receiptRPCStub) {
+				s.receiptErr = context.DeadlineExceeded
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			intent, client := swapReceiptFixture(t)
+			if tt.mutate != nil {
+				tt.mutate(&intent, client)
+			}
+
+			reader, err := NewRPCReceiptReader(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := reader.VerifyTx(
+				context.Background(),
+				client.tx.Hash().Hex(),
+				intent,
+			)
+
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("want %v, got %v", tt.wantErr, err)
+				}
+				if result.Verified || result.AmountOutRaw != nil {
+					t.Fatal("error must not produce verified output")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Receipt.Status != tt.wantStatus {
+				t.Fatalf(
+					"status = %s, want %s",
+					result.Receipt.Status,
+					tt.wantStatus,
+				)
+			}
+			if result.Verified != tt.wantVerified {
+				t.Fatalf("verified = %v", result.Verified)
+			}
+
+			if tt.wantVerified {
+				wantAmountOut := "999900"
+				if tt.name == "output exactly at confirmed minimum" {
+					wantAmountOut = "990000"
+				}
+
+				if result.AmountOutRaw == nil ||
+					*result.AmountOutRaw != wantAmountOut {
+					t.Fatal("incorrect verified output amount")
+				}
+			} else if result.AmountOutRaw != nil {
+				t.Fatal("unverified transaction must not expose verified output")
+			}
+		})
+	}
+}
+
+func TestVerifyTxRejectsDifferentHash(t *testing.T) {
+	intent, client := swapReceiptFixture(t)
+
+	reader, err := NewRPCReceiptReader(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid hash format, but it is not the transaction returned by RPC.
+	differentHash := common.HexToHash("0x9876").Hex()
+
+	result, err := reader.VerifyTx(
+		context.Background(),
+		differentHash,
+		intent,
+	)
+	if err == nil {
+		t.Fatal("expected mismatched transaction hash to be rejected")
+	}
+	if result.Verified || result.AmountOutRaw != nil {
+		t.Fatal("mismatched hash must not produce verified output")
+	}
+	if client.receiptCalls != 0 {
+		t.Fatal("must reject transaction identity before reading receipt")
+	}
+}
+
+func TestWaitForVerifiedSwapPendingTimeout(t *testing.T) {
+	intent, client := swapReceiptFixture(t)
+	client.pending = true
+	client.receipt = nil
+	client.receiptErr = ethereum.NotFound
+
+	reader, err := NewRPCReceiptReader(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Shorter than the first polling delay; no real 30-second wait.
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		50*time.Millisecond,
+	)
+	defer cancel()
+
+	result, err := reader.WaitForVerifiedSwap(
+		ctx,
+		client.tx.Hash().Hex(),
+		intent,
+	)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline exceeded, got %v", err)
+	}
+	if result.Verified || result.AmountOutRaw != nil {
+		t.Fatal("timeout must not produce verified output")
+	}
+
+	// A heavily delayed test runner may expire before the first RPC.
+	if result.Receipt.TransactionHash != "" &&
+		result.Receipt.Status != TransactionStatusPending {
+		t.Fatalf("unexpected status after timeout: %s", result.Receipt.Status)
+	}
+	if client.receiptCalls > 1 {
+		t.Fatalf(
+			"unexpected polling before first delay: %d calls",
+			client.receiptCalls,
+		)
+	}
+}
+
+func TestWaitForVerifiedSwapCancelled(t *testing.T) {
+	intent, client := swapReceiptFixture(t)
+
+	reader, err := NewRPCReceiptReader(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := reader.WaitForVerifiedSwap(
+		ctx,
+		client.tx.Hash().Hex(),
+		intent,
+	)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context canceled, got %v", err)
+	}
+	if result.Verified {
+		t.Fatal("cancelled verification must not succeed")
+	}
+	if client.receiptCalls != 0 {
+		t.Fatal("cancelled context must not trigger receipt queries")
+	}
+}
+
+func TestWaitForVerifiedSwapStopsWhenMined(t *testing.T) {
+	for _, reverted := range []bool{false, true} {
+		name := "success"
+		if reverted {
+			name = "reverted"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			intent, client := swapReceiptFixture(t)
+			if reverted {
+				client.receipt.Status = types.ReceiptStatusFailed
+				client.receipt.Logs = nil
+			}
+
+			reader, err := NewRPCReceiptReader(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := reader.WaitForVerifiedSwap(
+				context.Background(),
+				client.tx.Hash().Hex(),
+				intent,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if client.receiptCalls != 1 {
+				t.Fatalf(
+					"mined transaction queried %d times",
+					client.receiptCalls,
+				)
+			}
+
+			if reverted {
+				if result.Receipt.Status != TransactionStatusFailed ||
+					result.Verified ||
+					result.AmountOutRaw != nil {
+					t.Fatal("incorrect reverted result")
+				}
+			} else if !result.Verified ||
+				result.AmountOutRaw == nil ||
+				*result.AmountOutRaw != "999900" {
+				t.Fatal("incorrect successful verification")
+			}
+		})
 	}
 }

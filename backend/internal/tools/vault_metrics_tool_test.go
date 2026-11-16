@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ func TestGetVaultMetricsToolContract(t *testing.T) {
 		wantFresh    string
 		wantWarnings int
 		wantCode     string
+		readerErr    error
 	}{
 		{name: "fresh", blockTime: &freshTime, decimals: 18, wantFresh: "fresh"},
 		{
@@ -53,6 +55,11 @@ func TestGetVaultMetricsToolContract(t *testing.T) {
 		{
 			name: "wrong underlying decimals", blockTime: &freshTime,
 			decimals: 6, wantCode: "INVALID_VAULT_RESPONSE",
+		},
+		{
+			name:      "RPC unavailable returns no metrics",
+			readerErr: errors.New("RPC unavailable"),
+			wantCode:  "UPSTREAM_VAULT_ERROR",
 		},
 	}
 
@@ -68,6 +75,9 @@ func TestGetVaultMetricsToolContract(t *testing.T) {
 					request.WalletAddress != wallet ||
 					request.DepositAssetsRaw != "0" {
 					t.Fatalf("unexpected reader request: %+v", request)
+				}
+				if tt.readerErr != nil {
+					return avalanche.VaultMetricsResult{}, tt.readerErr
 				}
 
 				return avalanche.VaultMetricsResult{
@@ -124,6 +134,15 @@ func TestGetVaultMetricsToolContract(t *testing.T) {
 			if tt.wantCode != "" {
 				if result.Error == nil || result.Error.Code != tt.wantCode {
 					t.Fatalf("want %s, got %+v", tt.wantCode, result.Error)
+				}
+
+				if tt.readerErr != nil {
+					if len(result.Data) != 0 && string(result.Data) != "null" {
+						t.Fatalf("RPC error must not return metrics data: %s", result.Data)
+					}
+					if result.BlockNumber != nil || result.Source == source {
+						t.Fatalf("RPC error must not report successful vault provenance: %+v", result)
+					}
 				}
 				return
 			}

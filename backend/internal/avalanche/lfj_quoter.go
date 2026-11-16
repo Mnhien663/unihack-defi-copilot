@@ -109,6 +109,7 @@ func (q *LFJQuoter) QuoteExactInput(
 	ctx context.Context,
 	request SwapQuoteRequest,
 ) (SwapQuoteResult, error) {
+	startedAt := time.Now().UTC()
 	if err := ctx.Err(); err != nil {
 		return SwapQuoteResult{}, err
 	}
@@ -226,7 +227,7 @@ func (q *LFJQuoter) QuoteExactInput(
 		return SwapQuoteResult{}, err
 	}
 
-	return SwapQuoteResult{
+	quote := SwapQuoteResult{
 		Protocol:      "LFJ",
 		RouterAddress: q.router.Hex(),
 		TokenPath:     []Asset{assets[0], assets[1]},
@@ -244,7 +245,54 @@ func (q *LFJQuoter) QuoteExactInput(
 			ObservedAt:  time.Now().UTC(),
 			Mode:        "live",
 		},
-	}, nil
+	}
+	if request.SlippageBps == nil {
+		return quote, nil
+	}
+
+	slippage := *request.SlippageBps
+	if slippage > maxQuoteSlippageBps {
+		return SwapQuoteResult{}, fmt.Errorf("swap slippage exceeds application cap")
+	}
+
+	expectedOut, ok := new(big.Int).SetString(quote.AmountOut.Raw, 10)
+	if !ok || expectedOut.Sign() <= 0 {
+		return SwapQuoteResult{}, fmt.Errorf("invalid quoted output amount")
+	}
+
+	minOut := new(big.Int).Mul(expectedOut, big.NewInt(10_000-int64(slippage)))
+	minOut.Quo(minOut, big.NewInt(10_000))
+	if minOut.Sign() <= 0 {
+		return SwapQuoteResult{}, fmt.Errorf("minimum output rounds down to zero")
+	}
+
+	formatted, err := FormatTokenAmount(minOut.String(), quote.AmountOut.Asset.Decimals)
+	if err != nil {
+		return SwapQuoteResult{}, fmt.Errorf("format swap minimum output: %w", err)
+	}
+
+	const prepareQuoteTTL = 30 * time.Second
+	observedAt := quote.Provenance.ObservedAt
+	if observedAt.IsZero() {
+		return SwapQuoteResult{}, fmt.Errorf("quote observation time is missing")
+	}
+	expiresAt := startedAt.Add(prepareQuoteTTL)
+	if observedExpiry := observedAt.Add(prepareQuoteTTL); observedExpiry.Before(expiresAt) {
+		expiresAt = observedExpiry
+	}
+	if !time.Now().UTC().Before(expiresAt) {
+		return SwapQuoteResult{}, ErrQuoteExpired
+	}
+
+	quote.MinAmountOut = TokenAmount{
+		Asset:     quote.AmountOut.Asset,
+		Raw:       minOut.String(),
+		Formatted: formatted,
+	}
+	quote.SlippageBps = slippage
+	quote.ExpiresAt = expiresAt
+
+	return quote, nil
 }
 
 func lfjTokenAmount(asset Asset, amount *big.Int) (TokenAmount, error) {
