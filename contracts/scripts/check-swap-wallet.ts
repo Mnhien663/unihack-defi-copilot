@@ -239,3 +239,218 @@ console.log(
   "Amount out formatted:",
   ethers.formatUnits(parsed.args.amountOut, 6)
 );
+
+const dev1FundingHash =
+  "0x62e194b3af325a2cf5cd6485983a5a9320e561c36accd9e9f3eee9705cf66786";
+
+const dev1FundingTx =
+  await ethers.provider.getTransaction(dev1FundingHash);
+const dev1FundingReceipt =
+  await ethers.provider.getTransactionReceipt(dev1FundingHash);
+
+assert.ok(dev1FundingTx, "Không tìm thấy funding transaction");
+assert.ok(dev1FundingReceipt, "Chưa có receipt. Không gửi lại.");
+assert.equal(dev1FundingReceipt.status, 1, "Funding đã revert");
+assert.equal(dev1FundingTx.chainId, 43113n);
+assert.equal(dev1FundingTx.from.toLowerCase(), wallet.toLowerCase());
+assert.equal(
+  dev1FundingTx.to?.toLowerCase(),
+  "0xb4315e873dbcf96ffd0acd8ea43f689d8c20fb30"
+);
+assert.equal(dev1FundingTx.value, ethers.parseEther("0.08"));
+
+const lfjUsdt = new ethers.Contract(
+  "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+  ["function balanceOf(address) view returns (uint256)"],
+  ethers.provider
+);
+const fundedBalance = await lfjUsdt.getFunction("balanceOf")(
+  wallet, { blockTag: dev1FundingReceipt.blockNumber }
+);
+assert.ok(fundedBalance >= 1000000n, "USDT vẫn chưa đủ 1 token");
+
+console.log("\nDev1 funding transaction:", dev1FundingHash);
+console.log("Funding receipt status: success");
+console.log("Funding mined block:", dev1FundingReceipt.blockNumber);
+console.log("Funded USDT balance raw:", fundedBalance.toString());
+console.log("Funded USDT balance:", ethers.formatUnits(fundedBalance, 6));
+
+const dev1ApprovalHash =
+  "0xed824e22c2b4f700a4908c8c97957c44e8ebb7ea3b77b63469819f62f46ff83d";
+
+const dev1ApprovalTx =
+  await ethers.provider.getTransaction(dev1ApprovalHash);
+const dev1ApprovalReceipt =
+  await ethers.provider.getTransactionReceipt(dev1ApprovalHash);
+
+assert.ok(dev1ApprovalTx, "Không tìm thấy approval");
+assert.ok(dev1ApprovalReceipt, "Chưa có receipt. Không gửi lại.");
+assert.equal(dev1ApprovalReceipt.status, 1, "Approval đã revert");
+assert.equal(dev1ApprovalTx.chainId, 43113n);
+assert.equal(dev1ApprovalTx.from.toLowerCase(), wallet.toLowerCase());
+assert.equal(
+  dev1ApprovalTx.to?.toLowerCase(),
+  "0xab231a5744c8e6c45481754928ccffffd4aa0732"
+);
+assert.equal(dev1ApprovalTx.value, 0n);
+
+const dev1ApprovalInterface = new ethers.Interface([
+  "function approve(address spender,uint256 amount) returns (bool)",
+]);
+assert.equal(
+  dev1ApprovalTx.data.toLowerCase(),
+  dev1ApprovalInterface.encodeFunctionData(
+    "approve", [manager, 1000000n]
+  ).toLowerCase()
+);
+
+const dev1Usdt = new ethers.Contract(
+  "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+  ["function allowance(address,address) view returns (uint256)"],
+  ethers.provider
+);
+const dev1Allowance = await dev1Usdt.getFunction("allowance")(
+  wallet, manager,
+  { blockTag: dev1ApprovalReceipt.blockNumber }
+);
+assert.equal(dev1Allowance, 1000000n);
+
+console.log("\nDev1 approval transaction:", dev1ApprovalHash);
+console.log("Approval receipt status: success");
+console.log("Approval mined block:", dev1ApprovalReceipt.blockNumber);
+console.log("Verified allowance raw:", dev1Allowance.toString());
+
+// Verify the 1 USDT budget prepared for Dev1.
+const dev1BudgetHash =
+  "0x2968f59399cc9a2f77736965f958aa80dc759bcfdbaedba08ecd9714e0679d5a";
+
+const dev1ReadyWallet =
+  "0x37E146a4141C8fd82f0c8c5Bb8035930fD0ea588";
+const dev1ReadyManager =
+  "0xA7c9881eb43902Ca668bb864668eAA3795f2283B";
+const dev1ReadyToken =
+  "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732";
+
+const dev1RequiredAmount = 1_000_000n;
+const dev1ExpectedExpiry = 1794499480n;
+
+const dev1BudgetReceipt =
+  await ethers.provider.getTransactionReceipt(dev1BudgetHash);
+const dev1BudgetTx =
+  await ethers.provider.getTransaction(dev1BudgetHash);
+
+assert(dev1BudgetReceipt, "Dev1 budget receipt not found");
+assert(dev1BudgetTx, "Dev1 budget transaction not found");
+assert.equal(dev1BudgetReceipt.status, 1, "Budget transaction reverted");
+assert.equal(dev1BudgetTx.chainId, 43113n);
+assert.equal(
+  dev1BudgetTx.from.toLowerCase(),
+  dev1ReadyWallet.toLowerCase()
+);
+assert.equal(
+  dev1BudgetTx.to?.toLowerCase(),
+  dev1ReadyManager.toLowerCase()
+);
+assert.equal(dev1BudgetTx.value, 0n);
+
+const dev1BudgetInterface = new ethers.Interface([
+  "function setBudget(address token,uint256 amount,uint256 expiry)",
+]);
+
+assert.equal(
+  dev1BudgetTx.data.toLowerCase(),
+  dev1BudgetInterface.encodeFunctionData("setBudget", [
+    dev1ReadyToken,
+    dev1RequiredAmount,
+    dev1ExpectedExpiry,
+  ]).toLowerCase(),
+  "Budget calldata differs from expected intent"
+);
+
+const dev1ReadyBlock = await ethers.provider.getBlock("latest");
+assert(dev1ReadyBlock, "Latest block missing");
+
+const dev1ReadToken = new ethers.Contract(
+  dev1ReadyToken,
+  [
+    "function balanceOf(address) view returns (uint256)",
+    "function allowance(address,address) view returns (uint256)",
+  ],
+  ethers.provider
+);
+
+const dev1ReadManager = new ethers.Contract(
+  dev1ReadyManager,
+  ["function remaining(address,address) view returns (uint256)"],
+  ethers.provider
+);
+
+const dev1ReadOptions = { blockTag: dev1ReadyBlock.number };
+
+const [
+  dev1ReadyBalance,
+  dev1ReadyAllowance,
+  dev1ReadyBudget,
+] = await Promise.all([
+  dev1ReadToken.getFunction("balanceOf")(
+    dev1ReadyWallet,
+    dev1ReadOptions
+  ),
+  dev1ReadToken.getFunction("allowance")(
+    dev1ReadyWallet,
+    dev1ReadyManager,
+    dev1ReadOptions
+  ),
+  dev1ReadManager.getFunction("remaining")(
+    dev1ReadyWallet,
+    dev1ReadyToken,
+    dev1ReadOptions
+  ),
+]);
+
+console.log("\nDev1 budget transaction:", dev1BudgetHash);
+console.log("Budget receipt status: success");
+console.log("Budget mined block:", dev1BudgetReceipt.blockNumber);
+console.log("Budget transaction matches expected fields: true");
+console.log("Readiness checked block:", dev1ReadyBlock.number);
+console.log("USDT balance raw:", dev1ReadyBalance.toString());
+console.log("Allowance raw:", dev1ReadyAllowance.toString());
+console.log("Effective budget raw:", dev1ReadyBudget.toString());
+console.log("Budget expiry:", dev1ExpectedExpiry.toString());
+console.log(
+  "Budget expiry UTC:",
+  new Date(Number(dev1ExpectedExpiry) * 1000).toISOString()
+);
+
+const dev1OriginalBudgetUnexpired =
+  BigInt(dev1ReadyBlock.timestamp) < dev1ExpectedExpiry;
+
+const dev1WalletReady =
+  dev1ReadyBalance >= dev1RequiredAmount &&
+  dev1ReadyAllowance >= dev1RequiredAmount &&
+  dev1ReadyBudget >= dev1RequiredAmount;
+
+console.log(
+  "Original verified budget still unexpired:",
+  dev1OriginalBudgetUnexpired
+);
+console.log(
+  "Wallet ready at checked block for amountInRaw=1000000:",
+  dev1WalletReady
+);
+
+if (!dev1OriginalBudgetUnexpired) {
+  console.log(
+    "Historical budget has expired. Its successful receipt " +
+    "does not prove current wallet readiness."
+  );
+}
+
+if (!dev1WalletReady) {
+  console.log(
+    "Wallet is not currently ready. Review balance, allowance " +
+    "and effective budget before requesting any new transaction."
+  );
+}
+
+console.log("Read-only verification. No transaction sent.");
