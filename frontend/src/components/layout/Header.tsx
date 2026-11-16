@@ -1,5 +1,6 @@
 
 import "./Header.css";
+import WalletConnect from '../Wallet/WalletConnect';
 
 export function Header() {
   return (
@@ -15,9 +16,7 @@ export function Header() {
           <span>Avalanche Defi</span>
         </div>
 
-        <div className="dc-wallet-status">
-          Wallet not connected
-        </div>
+        <WalletConnect />
       </div>
     </header>
   );

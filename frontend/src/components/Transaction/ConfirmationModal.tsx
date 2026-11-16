@@ -1,10 +1,13 @@
-
 import TransactionCard, {
   type PendingAction,
 } from './TransactionCard';
 
 import './ConfirmationModal.css';
 import { useEffect, useState } from 'react';
+import { useConnection } from 'wagmi';
+
+const FUJI_MANAGER_ADDRESS =
+  '0xA7c9881eb43902Ca668bb864668eAA3795f2283B';
 
 type ConfirmationModalProps = {
   isOpen: boolean;
@@ -17,12 +20,46 @@ function ConfirmationModal({
   pendingAction,
   onClose,
 }: ConfirmationModalProps) {
-  // Không có giao dịch hoặc modal chưa mở thì không hiển thị
-  if (!isOpen || !pendingAction) {
-    return null;
-  }
+  const { address, isConnected, chainId } = useConnection();
+
+  const isCorrectChain = isConnected && chainId === 43113;
+
+  const isWalletMatch =
+  Boolean(address && pendingAction?.wallet_address) &&
+  address!.toLowerCase() ===
+  pendingAction!.wallet_address!.toLowerCase();
+
+  const isActionChainMatch =
+  isCorrectChain &&
+  pendingAction?.chain_id === chainId;
+
+  const isManagerMatch =
+  pendingAction?.arguments.summary.manager_address?.toLowerCase() ===
+  FUJI_MANAGER_ADDRESS.toLowerCase();
+
+  const hasActionId =
+  Boolean(pendingAction?.pending_action_id?.trim());
+
+  const hasReviewHash =
+    Boolean(pendingAction?.normalized_intent_hash?.trim());
 
   const [now, setNow] = useState(Date.now);
+
+  const expiresAt = pendingAction?.expires_at
+    ? new Date(pendingAction.expires_at).getTime()
+    : NaN;
+
+  const isExpired =
+    !Number.isFinite(expiresAt) || now >= expiresAt;
+
+  const isReadyForChallenge =
+    hasActionId &&
+    hasReviewHash &&
+    !isExpired &&
+    isCorrectChain &&
+    isWalletMatch &&
+    isActionChainMatch &&
+    isManagerMatch;
 
     useEffect(() => {
     if (!isOpen) return;
@@ -54,12 +91,10 @@ function ConfirmationModal({
         };
         }, [isOpen, onClose]);
 
-    const expiresAt = pendingAction?.expires_at
-    ? new Date(pendingAction.expires_at).getTime()
-    : NaN;
-
-    const isExpired =
-    !Number.isFinite(expiresAt) || now >= expiresAt;
+  // Không có giao dịch hoặc modal chưa mở thì không hiển thị
+  if (!isOpen || !pendingAction) {
+    return null;
+  }
 
   return (
     <div className="confirmation-backdrop">
@@ -86,7 +121,41 @@ function ConfirmationModal({
 
         {/* MOCK warning */}
         <p>MOCK PREVIEW — No real transaction</p>
-  
+        <div className="confirmation-network-status" role="status">
+          {!isWalletMatch && (
+            <p role="alert">
+              ⚠️ Wallet does not match transaction owner.
+              Transaction confirmation is disabled.
+            </p>
+          )}
+
+          {!isActionChainMatch && (
+            <p role="alert">
+              ⚠️ Transaction network mismatch.
+              Please switch to Avalanche Fuji.
+            </p>
+          )}
+
+          {!isManagerMatch && (
+            <p role="alert">
+              ⚠️ Manager Contract mismatch.
+              Transaction confirmation is disabled.
+            </p>
+          )}
+
+          <p role="status">
+            {isReadyForChallenge
+              ? 'Basic checks passed — Awaiting Challenge API.'
+              : 'Transaction not ready for confirmation.'}
+          </p>
+
+          {!isConnected
+            ? '⚠️ Wallet not connected'
+            : !isCorrectChain
+              ? '⚠️ Wrong network — Switch to Avalanche Fuji'
+              : '✓ Wallet connected to Avalanche Fuji'}
+        </div>
+
         {isExpired && (
         <p role="alert">
             ⚠️ Transaction expired — Cannot confirm.
