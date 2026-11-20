@@ -145,3 +145,103 @@
     flex-wrap: wrap;
   }
 }
+
+/* =========================================
+   PORTFOLIO RISK CARD - FINAL POLISH
+   ========================================= */
+
+.dc-portfolio-card {
+  gap: 16px;
+  margin-top: 8px;
+  padding: 20px;
+}
+
+/* Portfolio header */
+.dc-portfolio-header h3 {
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.dc-portfolio-header p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Demo label */
+.dc-demo-label {
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+/* Asset cards */
+.dc-asset {
+  gap: 8px;
+  padding: 16px;
+}
+
+.dc-asset-title {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.dc-token-icon {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.dc-asset-amount {
+  font-size: 22px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.dc-asset-value {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Health Factor */
+.dc-health-card {
+  min-height: 90px;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.dc-health-score {
+  width: 64px;
+  height: 64px;
+  font-size: 20px;
+  text-align: center;
+}
+
+.dc-health-card strong {
+  font-size: 17px;
+}
+
+.dc-health-card p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dc-health-demo {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+  .dc-portfolio-card {
+    padding: 16px;
+  }
+
+  .dc-health-card {
+    gap: 12px;
+  }
+
+  .dc-health-demo {
+    margin-left: 0;
+  }
+}

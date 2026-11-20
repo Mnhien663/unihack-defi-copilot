@@ -80,15 +80,19 @@
   gap: 8px;
 }
 
+
 .dc-nav-item {
   display: flex;
   align-items: center;
   gap: 12px;
 
-  padding: 13px 12px;
+  min-height: 52px;
+  padding: 14px 12px;
   border-radius: 8px;
 
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
   white-space: normal;
 }
 

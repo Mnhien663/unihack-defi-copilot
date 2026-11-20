@@ -6,15 +6,15 @@
 .chatbot {
   display: flex;
   flex-direction: column;
+  flex: 1;
   gap: 14px;
 
   width: 100%;
-  max-width: 1100px;
-  height: 100%;
-  min-height: 0;
+  max-width: none;
   min-width: 0;
+  min-height: 0;
 
-  margin: 0 auto;
+  margin: 0;
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -174,4 +174,182 @@
   .dc-chat-composer {
     padding: 12px 0;
   }
+}
+
+
+/* ==================================
+   6. API ERROR MESSAGE
+   ================================== */
+
+.chat-api-error {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 12px 16px;
+
+  color: #991b1b;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #e84142;
+  border-radius: 10px;
+
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* ==================================
+   7. DEVELOPMENT / MOCK BUTTONS
+   ================================== */
+
+.chatbot > button {
+  align-self: flex-start;
+  flex-shrink: 0;
+
+  padding: 9px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+
+  color: #172338;
+  background-color: #ffffff;
+
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.chatbot > button:hover:not(:disabled) {
+  background-color: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+/* ==================================
+   8. TRANSACTION RECOVERY PANEL
+   ================================== */
+
+.pending-swap-recovery {
+  flex-shrink: 0;
+  padding: 16px;
+  max-height: 240px;
+  overflow-y: auto;
+
+  background-color: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 12px;
+
+  color: #78350f;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.pending-swap-recovery h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.pending-swap-recovery p {
+  margin: 8px 0;
+}
+
+.pending-swap-recovery code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.pending-swap-recovery button {
+  padding: 10px 16px;
+  margin-top: 8px;
+
+  border: none;
+  border-radius: 10px;
+  background-color: #172338;
+  color: #ffffff;
+
+  font-family: var(--font-ui);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pending-swap-recovery button:hover:not(:disabled) {
+  background-color: #e84142;
+}
+
+.pending-swap-recovery button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ==================================
+   9. ACCESSIBILITY
+   ================================== */
+
+.chatbot button:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chatbot button {
+    transition: none;
+  }
+}
+
+/* ==================================
+   BALANCED CHAT LAYOUT
+   ================================== */
+
+.chatbot {
+  gap: 10px;
+}
+
+/* Compact development buttons */
+.chatbot > button {
+  padding: 8px 14px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Move MOCK button closer to suggestions */
+.chatbot > button:first-of-type {
+  margin-top: -8px;
+}
+
+/* Comfortable and consistent chat messages */
+.chat-bubble {
+  max-width: 75%;
+  padding: 12px 16px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+/* Give remaining height to chat */
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
+
+/* Composer stays slightly above bottom */
+.dc-chat-composer {
+  padding-top: 8px;
+  padding-bottom: 16px;
+}
+
+.chat-input-row input {
+  font-size: 16px;
+  padding: 12px 16px;
+}
+
+.chat-input-row button {
+  font-size: 16px;
+  padding: 12px 20px;
 }

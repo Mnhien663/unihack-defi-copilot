@@ -33,31 +33,23 @@
 }
 
 /* Nhãn MOCK */
-.transaction-review p:first-of-type {
+.transaction-review .transaction-mock-label {
   display: inline-block;
+  margin: 0 0 14px;
+  padding: 7px 12px;
+
   background: #fff3e6;
-  color: #b45309;
+  border: 1px solid #fed7aa;
   border-radius: 8px;
-  padding: 6px 10px;
-  margin-bottom: 12px;
-  font-size: 12px;
+
+  color: #b45309;
+  font-size: 13px;
   font-weight: 600;
 }
 
 /* Đường phân cách thông tin */
-.transaction-review p:not(:first-of-type):not(:last-child) {
+.transaction-review > p:not(.transaction-mock-label) {
   border-bottom: 1px solid #edf0f5;
-}
-
-/* Cảnh báo chưa được ký */
-.transaction-review p:last-child {
-  margin-top: 12px;
-  padding: 12px;
-  background: #f1f5f9;
-  border-radius: 8px;
-  color: #64748b;
-  text-align: center;
-  font-size: 13px;
 }
 
 @media (max-width: 768px) {
@@ -133,5 +125,70 @@
 
   .transaction-details-content p {
     font-size: 12px;
+  }
+}
+
+/* =========================================
+   TRANSACTION REVIEW - DESKTOP POLISH
+   ========================================= */
+
+.transaction-review {
+  min-width: 0;
+  padding: 22px 24px;
+  border-radius: 16px;
+}
+
+.transaction-review h3 {
+  margin-bottom: 16px;
+  font-size: 21px;
+  line-height: 1.4;
+}
+
+.transaction-review > p:not(.transaction-mock-label) {
+  padding: 13px 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #172338;
+}
+
+.transaction-review strong {
+  color: #475569;
+  font-weight: 600;
+}
+
+.transaction-details > summary {
+  font-size: 15px;
+  padding: 14px 4px;
+}
+
+.transaction-details-content p {
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 11px 0;
+  overflow-wrap: anywhere;
+}
+
+/* Prevent long addresses from overflowing */
+.transaction-review,
+.transaction-details-content {
+  overflow-wrap: anywhere;
+}
+
+/* Hover and focus */
+.transaction-details > summary:hover {
+  color: #a93230;
+}
+
+@media (max-width: 600px) {
+  .transaction-review {
+    padding: 16px;
+  }
+
+  .transaction-review > p:not(.transaction-mock-label) {
+    font-size: 14px;
+  }
+
+  .transaction-details-content p {
+    font-size: 13px;
   }
 }

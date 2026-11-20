@@ -17,3 +17,17 @@ body {
   background-color: var(--color-page);
   color: var(--color-text);
 }
+
+/* Shared typography for form controls */
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-ui);
+}
+
+/* Consistent text rendering */
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

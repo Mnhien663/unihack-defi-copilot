@@ -3,7 +3,6 @@ import './styles/tokens.css';
 
 import Header from './components/layout/Header';
 import Sidebar from './components/layout/Sidebar';
-import Footer from './components/layout/Footer';
 
 import Chatbot from './components/Chat/Chatbot';
 
@@ -20,8 +19,6 @@ function App() {
         <main className="content">
           <Chatbot />
         </main>
-
-        <Footer />
 
       </div>
     </div>

@@ -69,7 +69,11 @@ function TransactionCard({
     <section className="transaction-review">
       <h3>Transaction Review</h3>
 
-      {isMock && <p>MOCK DATA — Preview only</p>}
+      {isMock && (
+        <p className="transaction-mock-label">
+          MOCK DATA — Preview only
+        </p>
+      )}
 
       {/* Main information */}
       <p>

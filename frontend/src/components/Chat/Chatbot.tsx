@@ -368,12 +368,14 @@ function Chatbot() {
         </button>
       )}
 
-      {import.meta.env.DEV && isMockAction && pendingAction && (
+      {pendingAction && (
         <button
           type="button"
           onClick={() => setIsConfirmationOpen(true)}
         >
-          Open MOCK Modal
+          {isMockAction
+            ? 'Open MOCK Modal'
+            : 'Review Transaction'}
         </button>
       )}
 
@@ -382,10 +384,6 @@ function Chatbot() {
         ref={messagesContainerRef}
       >
         <PortfolioRiskCard />
-        <TransactionCard
-          pendingAction={pendingAction}
-          isMock={isMockAction}
-        />
 
         {messages.map((message) => (
           <div
