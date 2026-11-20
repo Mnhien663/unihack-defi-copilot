@@ -129,3 +129,53 @@ Scope:
 - Full product confirmation/API integration remains separate.
 - DemoVault holds DDEMO without a yield strategy; APY remains null.
 - No contract redeployment or ABI change was needed.
+
+## Docker backend and Gemini smoke — 2026-11-14
+
+- Backend image built successfully.
+- Runtime user: app, uid=100, gid=101.
+- CA certificate bundle exists and is non-empty.
+- PostgreSQL migrations 3 and 4 applied successfully.
+- Backend waits for PostgreSQL health before starting.
+- GET /health returned status=ok, storage=postgres,
+  ai_provider=gemini, data_mode=mock.
+- POST /api/v1/chat returned HTTP 200, error=null,
+  tool_calls=[], pending_action=null.
+- Gemini success log at 2026-11-14T14:31:50Z:
+  model=gemini-3-flash-preview, latency_ms=2761,
+  input_tokens=1241, output_tokens=8,
+  thinking_tokens=213, total_tokens=1462, tool_call_count=0.
+- A separate temporary container with GEMINI_API_KEY explicitly
+  empty exited with "GEMINI_API_KEY is not configured".
+  The running backend and local .env were unchanged.
+- Provider tests passed:
+  go test ./internal/ai -run 'Test.*(Gemini|OpenAI)' -count=1
+
+Scope: live Gemini connectivity with mock chain data.
+This does not prove live chain tools or transaction confirmation.
+Invalid-key, HTTP 429 and timeout live smoke tests were not run.
+Provider unit tests use fixtures; they are not live quota evidence.
+No API keys are included in this evidence.
+
+## Clean-clone Docker smoke — 2026-11-14
+
+- Remote main cloned into a separate directory at commit 786e235.
+- Used compose.smoke.yaml with project name dev2-clean-smoke.
+- Separate PostgreSQL volume; database port not published.
+- Backend exposed only on 127.0.0.1:18080.
+- No provider API key or deployer key required.
+- Backend image built successfully; build cache was available.
+- Startup order: PostgreSQL healthy → migrations exit 0 → backend starts.
+- Schema version: 4, dirty=false.
+- Health: status=ok, storage=postgres, AI/data modes both mock.
+- Chat returned HTTP 200, error=null, with get_native_balance output
+  explicitly labeled mock_chain.
+- Request ID: 1248c849-1691-40d1-8eb9-d7515ce67786.
+- User message ID 1 and assistant message ID 2 persisted unchanged
+  after docker compose down and up without deleting volumes.
+- Migration rerun completed successfully; schema remained version 4.
+- Backend health succeeded after container recreation.
+
+Scope: backend/database reproducibility using the dedicated smoke
+configuration. Frontend, live providers and live chain flows were
+not exercised in this clean-clone test.

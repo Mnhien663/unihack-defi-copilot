@@ -14,7 +14,7 @@
   <button id="connect">Kết nối và kiểm tra</button>
   <button id="simulate">Mô phỏng lấy LFJ USDT</button>
   <button id="send-funding" disabled>
-  Xác nhận đổi 0.001 AVAX lấy USDT
+  Xác nhận đổi 0.08 AVAX lấy USDT
 </button>
 <button id="approve-usdt">Approve 0.01 USDT cho Manager</button>
   <button id="set-budget">Đặt budget 0.01 USDT / 1 giờ</button>
@@ -29,6 +29,9 @@
 <button id="send-ddemo-deposit">Xác nhận và ký deposit 0.1 DDEMO</button>
 <button id="simulate-demo-redeem">Mô phỏng redeem 0.1 dvDDEMO</button>
 <button id="send-demo-redeem">Xác nhận và ký redeem 0.1 dvDDEMO</button>
+<hr>
+<button id="approve-dev1-usdt">Approve 1 USDT cho ca Dev1</button>
+<button id="budget-dev1-usdt">Đặt budget 1 USDT / 1 giờ cho Dev1</button>
   <pre id="output"></pre>
 
   <script type="module">
@@ -176,7 +179,7 @@ sendFundingButton.disabled = true;
       fundingPair, pairABI, "getTokenY"
     );
     const swapForY = tokenY.toLowerCase() === usdt.toLowerCase();
-    const value = 1_000_000_000_000_000n; // 0.001 AVAX
+    const value = 80_000_000_000_000_000n; // 0.08 AVAX testnet
 
     const [left, quotedOut] = await read(
       fundingRouter,
@@ -190,9 +193,9 @@ sendFundingButton.disabled = true;
     }
 
     const minimum = quotedOut * 9900n / 10000n;
-    if (minimum < 10000n) {
-      throw new Error("Đầu ra tối thiểu chưa đủ 0.01 USDT để test.");
-    }
+    if (minimum < 1_000_000n) {
+  throw new Error("Đầu ra tối thiểu chưa đủ 1 LFJ USDT.");
+}
 
     const deadline = BigInt(block.timestamp) + 600n;
     const data = encodeFunctionData({
@@ -249,7 +252,7 @@ sendFundingButton.disabled = true;
       "Chain: 43113",
       `Block: ${BigInt(block.number)}`,
       `Router: ${fundingRouter}`,
-      "Chi: 0.001 AVAX testnet",
+      "Chi: 0.08 AVAX testnet",
       `Quote: ${formatUnits(quotedOut, 6)} LFJ USDT`,
       `Minimum: ${formatUnits(minimum, 6)} LFJ USDT`,
       `Simulation output: ${formatUnits(simulatedOut, 6)} LFJ USDT`,
@@ -318,7 +321,7 @@ sendFundingButton.addEventListener("click", async () => {
       "Xác nhận giao dịch cấp token trên Fuji 43113:",
       `Ví: ${candidate.account}`,
       `Router: ${fundingRouter}`,
-      "Chi: 0.001 AVAX testnet + phí gas",
+      "Chi: 0.08 AVAX testnet + phí gas",
       `Nhận tối thiểu: ${formatUnits(candidate.minimum, 6)} LFJ USDT`,
       `Deadline: ${candidate.deadline}`,
       "",
@@ -1818,6 +1821,249 @@ demoRedeemSendButton.addEventListener("click", async () => {
     demoRedeemSending = false;
     demoRedeemSendButton.disabled =
       localStorage.getItem(demoRedeemSubmissionKey) !== null;
+  }
+});
+
+  const dev1ApprovalKey = "dev1-usdt-1-approval";
+const dev1ApproveButton = document.querySelector("#approve-dev1-usdt");
+let dev1ApprovalBusy = false;
+
+const dev1TokenABI = parseAbi([
+  "function balanceOf(address owner) view returns (uint256)",
+  "function allowance(address owner,address spender) view returns (uint256)",
+  "function approve(address spender,uint256 amount) returns (bool)",
+]);
+
+dev1ApproveButton.addEventListener("click", async () => {
+  if (dev1ApprovalBusy) return;
+  dev1ApprovalBusy = true;
+  dev1ApproveButton.disabled = true;
+  let submissionStarted = false;
+
+  try {
+    const saved = localStorage.getItem(dev1ApprovalKey);
+    if (saved) throw new Error("Kiểm tra approval đã gửi:\n" + saved);
+
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy chọn và kết nối Core.");
+    const account = await checkDemoWallet(provider);
+
+    async function read(functionName, args) {
+      const raw = await provider.request({
+        method: "eth_call",
+        params: [{
+          to: usdt,
+          data: encodeFunctionData({
+            abi: dev1TokenABI, functionName, args,
+          }),
+        }, "latest"],
+      });
+      return decodeFunctionResult({
+        abi: dev1TokenABI, functionName, data: raw,
+      });
+    }
+
+    const amount = 1_000_000n;
+    const balance = await read("balanceOf", [account]);
+    const allowance = await read(
+      "allowance", [account, executionManager]
+    );
+    if (balance < amount) throw new Error("Chưa đủ 1 LFJ USDT.");
+    if (allowance >= amount) {
+      output.textContent = "Allowance đã đủ 1 USDT. Không gửi thêm.";
+      return;
+    }
+    if (allowance !== 0n) {
+      throw new Error("Allowance đang khác zero; cần kiểm tra trước khi thay.");
+    }
+
+    const transaction = {
+      from: account,
+      to: usdt,
+      value: "0x0",
+      data: encodeFunctionData({
+        abi: dev1TokenABI,
+        functionName: "approve",
+        args: [executionManager, amount],
+      }),
+    };
+
+    const raw = await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+    if (!decodeFunctionResult({
+      abi: dev1TokenABI, functionName: "approve", data: raw,
+    })) {
+      throw new Error("Token trả approve = false.");
+    }
+
+    if (!window.confirm([
+      "Approve LFJ USDT trên Fuji 43113",
+      `Owner: ${account}`,
+      `Token: ${usdt}`,
+      `Spender Manager: ${executionManager}`,
+      "Allowance mới: 1 USDT (1000000 raw)",
+      "Native value: 0 AVAX; phí gas riêng.",
+      "Chưa đặt budget và chưa executeSwap.",
+      "Mở Core để xem và ký?",
+    ].join("\n"))) {
+      output.textContent = "Đã hủy. Chưa gửi approval.";
+      return;
+    }
+
+    await checkDemoWallet(provider);
+    localStorage.setItem(dev1ApprovalKey, JSON.stringify({
+      status: "submission_started",
+    }));
+    submissionStarted = true;
+
+    let hash;
+    try {
+      hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [transaction],
+      });
+    } catch (error) {
+      if (Number(error.code) === 4001) {
+        localStorage.removeItem(dev1ApprovalKey);
+        submissionStarted = false;
+      }
+      throw error;
+    }
+
+    localStorage.setItem(dev1ApprovalKey, JSON.stringify({
+      status: "submitted", transaction_hash: hash,
+    }));
+    output.textContent = [
+      "Đã gửi approve 1 LFJ USDT; cần kiểm tra receipt.",
+      `Transaction hash: ${hash}`,
+      "Chưa gọi setBudget hoặc executeSwap.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (submissionStarted) {
+      output.textContent += "\nKiểm tra Core trước khi thử lại.";
+    }
+  } finally {
+    dev1ApprovalBusy = false;
+    dev1ApproveButton.disabled =
+      localStorage.getItem(dev1ApprovalKey) !== null;
+  }
+});
+
+  const dev1BudgetKey = "dev1-usdt-1-budget";
+const dev1BudgetButton = document.querySelector("#budget-dev1-usdt");
+let dev1BudgetBusy = false;
+
+dev1BudgetButton.addEventListener("click", async () => {
+  if (dev1BudgetBusy) return;
+  dev1BudgetBusy = true;
+  dev1BudgetButton.disabled = true;
+  let submissionStarted = false;
+
+  try {
+    const saved = localStorage.getItem(dev1BudgetKey);
+    if (saved) throw new Error("Kiểm tra budget đã gửi:\n" + saved);
+
+    const provider = wallets.get(select.value);
+    if (!provider) throw new Error("Hãy chọn và kết nối Core.");
+    const account = await checkDemoWallet(provider);
+
+    const block = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!block?.timestamp) throw new Error("Không đọc được block time.");
+
+    const amount = 1_000_000n;
+    const expiry = BigInt(block.timestamp) + 3600n;
+    const transaction = {
+      from: account,
+      to: executionManager,
+      value: "0x0",
+      data: encodeFunctionData({
+        abi: demoBudgetABI,
+        functionName: "setBudget",
+        args: [usdt, amount, expiry],
+      }),
+    };
+
+    await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    if (!window.confirm([
+      "Đặt budget LFJ USDT trên Fuji 43113",
+      `Owner: ${account}`,
+      `Manager: ${executionManager}`,
+      `Token: ${usdt}`,
+      "Budget mới: 1 USDT (1000000 raw), thay thế budget cũ.",
+      `Expiry: ${expiry}`,
+      "Thời hạn khoảng 1 giờ tính từ block vừa đọc.",
+      "Native value: 0 AVAX; phí gas riêng.",
+      "Chưa executeSwap; giữ ví sẵn sàng cho Dev1.",
+      "Mở Core để xem và ký?",
+    ].join("\n"))) {
+      output.textContent = "Đã hủy đặt budget. Chưa gửi.";
+      return;
+    }
+
+    await checkDemoWallet(provider);
+    const latest = await provider.request({
+      method: "eth_getBlockByNumber",
+      params: ["latest", false],
+    });
+    if (!latest?.timestamp ||
+        BigInt(latest.timestamp) + 60n >= expiry) {
+      throw new Error("Budget sắp hết hạn. Bắt đầu lại.");
+    }
+    await provider.request({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+
+    localStorage.setItem(dev1BudgetKey, JSON.stringify({
+      status: "submission_started",
+      expiry: expiry.toString(),
+    }));
+    submissionStarted = true;
+
+    let hash;
+    try {
+      hash = await provider.request({
+        method: "eth_sendTransaction",
+        params: [transaction],
+      });
+    } catch (error) {
+      if (Number(error.code) === 4001) {
+        localStorage.removeItem(dev1BudgetKey);
+        submissionStarted = false;
+      }
+      throw error;
+    }
+
+    localStorage.setItem(dev1BudgetKey, JSON.stringify({
+      status: "submitted",
+      transaction_hash: hash,
+      expiry: expiry.toString(),
+    }));
+    output.textContent = [
+      "Đã gửi budget 1 LFJ USDT; cần kiểm tra receipt.",
+      `Transaction hash: ${hash}`,
+      `Expiry: ${expiry}`,
+      "Chưa executeSwap.",
+    ].join("\n");
+  } catch (error) {
+    output.textContent = error.message ?? String(error);
+    if (submissionStarted) {
+      output.textContent += "\nKiểm tra Core trước khi thử lại.";
+    }
+  } finally {
+    dev1BudgetBusy = false;
+    dev1BudgetButton.disabled =
+      localStorage.getItem(dev1BudgetKey) !== null;
   }
 });
   </script>

@@ -86,3 +86,29 @@ The release, commit, Go version and plugin protocol recorded above
 remain candidate metadata until checked against precompile/upstream.lock
 and the selected upstream source. No new build or compatibility
 verification was performed during this preparation step.
+
+## Verified upstream baseline — 2026-11-14
+
+- Release tag, tag object, commit, Go requirements and plugin protocol
+  matched the pinned upstream.lock metadata.
+- Subnet-EVM baseline built successfully using Go 1.26.10 on linux/amd64.
+- Used the upstream graft/subnet-evm/scripts/build.sh script.
+- Build container limits: 4 CPUs, 8 GiB memory, GOMAXPROCS=4,
+  GOFLAGS=-p=2, GOTOOLCHAIN=local.
+- Source checkout and build output reside in Docker volume
+  dev2-native-source at /work/avalanchego.
+- Separate named volumes retain Go module and build caches.
+- Windows checkout encountered CRLF shell-script errors and persistent
+  modified-file status. Building from a clean Linux-volume clone
+  resolved this blocker.
+- Binary SHA-256:
+  6915dde73f7222a2c71e0a98cc3f700ac0ef6fa9aa8d462d5c40144db1973db0
+- Binary metadata confirmed CGO_ENABLED=1, GOOS=linux, GOARCH=amd64.
+- Upstream tests passed with -count=1 -timeout=10m:
+  ./precompile/contract, ./precompile/modules, ./precompile/allowlist.
+
+This verifies compilation and selected upstream unit tests.
+The custom budget precompile is not implemented yet.
+No local chain execution or Fuji L1 deployment has been verified.
+Earlier unverified-build statements above describe the initial assessment;
+this section records the subsequent baseline verification.

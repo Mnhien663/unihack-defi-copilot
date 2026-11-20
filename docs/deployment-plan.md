@@ -53,17 +53,27 @@ DATA_MODE=data_api requires the relevant Avalanche configuration.
 
 ## Database startup
 
-From the repository root:
+From the repository root, create .env from .env.example only if
+.env does not already exist. Set DB_PASSWORD locally before running.
 
 ```bash
 docker compose up -d db
-bash scripts/migrate.sh up
-AI_PROVIDER=mock DATA_MODE=mock docker compose up -d --build backend
+docker compose --profile tools run --rm migrate
+
+AI_PROVIDER=mock DATA_MODE=mock ENABLE_PREPARE_SWAP=0 \
+  docker compose up -d --build --force-recreate backend
+
+curl -sS http://localhost:8080/health
 ```
 
-Run migrations explicitly before starting the application on a fresh DB.
+Run migrations before starting the application on a fresh database
+and after pulling changes that add migrations.
 The backend does not create schema automatically.
+Compose waits for database health; it does not automatically run migrations.
 The migration runner tracks applied versions.
+
+Preserve the PostgreSQL volume during routine restarts.
+Do not use docker compose down -v unless database deletion is intended.
 Never run rollback against the main application DB for routine testing.
 
 ## Health and chat smoke
@@ -78,6 +88,50 @@ Never run rollback against the main application DB for routine testing.
 - A live-provider smoke remains a separate, potentially billable check.
 - Retain HTTP status, request_id, selected provider/model and outcome.
 - Do not record real keys or private user content as evidence.
+
+## Live Gemini smoke with mock chain data
+
+Set GEMINI_API_KEY and the team-approved GEMINI_MODEL in the local
+.env file. Do not put provider keys in VITE_* variables.
+
+```bash
+AI_PROVIDER=gemini DATA_MODE=mock ENABLE_PREPARE_SWAP=0 \
+  docker compose up -d --no-deps --force-recreate backend
+
+curl -sS http://localhost:8080/health
+
+curl -sS --max-time 90 \
+  -w '\nHTTP status: %{http_code}\n' \
+  http://localhost:8080/api/v1/chat \
+  -H 'Content-Type: application/json' \
+  --data-raw '{
+    "session_id": "judge-gemini-smoke-001",
+    "wallet_address": "0x37E146a4141C8fd82f0c8c5Bb8035930fD0ea588",
+    "chain_id": 43113,
+    "message": "Reply briefly with Connection OK. Do not call tools.",
+    "locale": "en"
+  }'
+```
+
+Use a new session ID for each independent smoke run.
+The wallet address above is a public test address; this request does
+not authenticate wallet ownership or request a transaction signature.
+
+Confirm HTTP 200 with error=null and inspect the
+"Gemini completion succeeded" backend log.
+Health alone is not proof of provider connectivity.
+The curl timeout is a client limit, not an extension of server deadlines.
+
+This run calls Gemini with mock blockchain data and swap preparation
+disabled. It does not prove live chain tools or confirm/signing flows.
+Do not repeatedly retry rate-limit or timeout errors.
+
+The backend runtime includes CA certificates and runs as user app.
+Its Docker build context is ./backend; backend/.dockerignore excludes
+local environment files, secret directories and common key files.
+
+Command-scoped mode overrides apply only to that Compose invocation.
+A later recreation without overrides uses the configuration in .env.
 
 ## Timeouts and shutdown
 
@@ -116,7 +170,8 @@ Current code:
 
 Confirmed locally:
 - Migration up/down/up on the separate test database.
-- Main DB migration version 2, clean at the migration check.
+- Earlier main DB check: migration version 2, clean.
+- On 2026-11-14, main DB migrations 3 and 4 applied successfully.
 - Three PostgreSQL integration tests passed.
 - Test-session data persisted across PostgreSQL container restart.
 - Backend health returned 200 in mock mode.
@@ -126,10 +181,67 @@ Confirmed locally:
 - PostgreSQL contains the user and assistant messages for this request.
 - The get_native_balance tool call was persisted with status succeeded.
 - Blockchain output was explicitly sourced from mock_chain.
+- Backend Docker build succeeded with CA certificates and non-root user app.
+- Live Gemini chat returned HTTP 200 with error=null and no tool calls.
+- Success log confirmed model gemini-3-flash-preview, latency 2761 ms,
+  total tokens 1462, at 2026-11-14T14:31:50Z.
+- A temporary container with an explicitly empty Gemini key exited
+  during initialization; the running backend was unchanged.
+- Provider unit tests passed using fixtures.
 
 Pending:
-- Live-provider smoke and account-specific quota/cost check.
-- Public-host deployment, HTTPS and frontend connectivity.
+- Account-specific quota, pricing and billing-control review.
+- Live invalid-key, rate-limit and timeout smoke tests were not run.
+- Live chain tools and production frontend integration require separate checks.
+- Public hosting, HTTPS and external frontend connectivity remain optional
+  and have not been verified.
+
+## Isolated clean-clone smoke
+
+This configuration tests backend/database startup without provider keys.
+It does not start the frontend or exercise live blockchain flows.
+Run from the repository root:
+
+```bash
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml config --quiet
+
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml \
+  up -d --build backend
+
+curl -sS http://localhost:18080/health
+```
+
+The smoke stack uses a separate database volume and no fixed container
+names. PostgreSQL is not published to the host. Backend is available
+only at 127.0.0.1:18080.
+
+The database password in this file is a public local-test value.
+Do not reuse it for production or add real secrets to this file.
+
+Backend startup requires PostgreSQL to be healthy and the migration
+service to complete successfully.
+
+To verify persistence, create a chat session, record its message IDs,
+then recreate the stack without deleting its volume:
+
+```bash
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml down
+
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml \
+  up -d backend
+```
+
+Query the same session and confirm its records remain unchanged.
+Migration reruns should succeed without changing an up-to-date schema.
+
+To stop the smoke stack while retaining its database:
+
+```bash
+docker compose -p dev2-clean-smoke -f compose.smoke.yaml down
+```
+
+Use the same project name and configuration file for every command.
+Do not run duplicate smoke stacks from multiple clones simultaneously.
 
 ## References
 

@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: local_smoke_only
+      POSTGRES_DB: deficopilot_db
+    volumes:
+      - smoke_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d deficopilot_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    environment:
+      PGPASSWORD: local_smoke_only
+    volumes:
+      - ./backend/migrations:/migrations:ro
+    entrypoint:
+      - migrate
+      - -path
+      - /migrations
+      - -database
+      - postgres://admin@db:5432/deficopilot_db?sslmode=disable
+    command: ["up"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: admin
+      DB_PASSWORD: local_smoke_only
+      DB_NAME: deficopilot_db
+      DB_SSLMODE: disable
+      AI_PROVIDER: mock
+      DATA_MODE: mock
+      ENABLE_PREPARE_SWAP: "0"
+      AVALANCHE_CHAIN_ID: "43113"
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 45s
+
+volumes:
+  smoke_pgdata:
