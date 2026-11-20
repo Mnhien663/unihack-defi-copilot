@@ -1,0 +1,1148 @@
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/README.md b/graft/subnet-evm/precompile/contracts/nativebudget/README.md
+new file mode 100644
+index 0000000..541cc1e
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/README.md
+@@ -0,0 +1,25 @@
++There are some must-be-done changes waiting in the generated file. Each area requiring you to add your code is marked with CUSTOM CODE to make them easy to find and modify.
++Additionally there are other files you need to edit to activate your precompile.
++These areas are highlighted with comments "ADD YOUR PRECOMPILE HERE".
++For testing take a look at other precompile tests in contract_test.go and config_test.go in other precompile folders.
++See the tutorial in <https://build.avax.network/academy/blockchain/solidity-foundry/04-hello-world-part-1/01-intro> for more information about precompile development.
++
++General guidelines for precompile development:
++
++1- Set a suitable config key in generated module.go. E.g: "yourPrecompileConfig"
++2- Read the comment and set a suitable contract address in generated module.go. E.g:
++ContractAddress = common.HexToAddress("ASUITABLEHEXADDRESS")
++3- It is recommended to only modify code in the highlighted areas marked with "CUSTOM CODE STARTS HERE". Typically, custom codes are required in only those areas.
++Modifying code outside of these areas should be done with caution and with a deep understanding of how these changes may impact the EVM.
++4- If you have any event defined in your precompile, review the generated event.go file and set your event gas costs. You should also emit your event in your function in the contract.go file.
++5- Set gas costs in generated contract.go
++6- Force import your precompile package in precompile/registry/registry.go
++7- Add your config unit tests under generated package config_test.go
++8- Add your contract unit tests under generated package contract_test.go
++9- Additionally you can add a full-fledged VM test for your precompile under plugin/vm/vm_test.go. See existing precompile tests for examples.
++10- Add your solidity interface and test contract to contracts/contracts
++11- Write solidity contract tests for your precompile in contracts/contracts/test
++12- Write TypeScript DS-Test counterparts for your solidity tests in contracts/test
++13- Create your genesis with your precompile enabled in tests/precompile/genesis/
++14- Create e2e test for your solidity test in tests/precompile/solidity/suites.go
++15- Run your e2e precompile Solidity tests with `./scripts/run_gingko.sh` from the root of `avalanchego`.
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/budget_lifecycle_test.go b/graft/subnet-evm/precompile/contracts/nativebudget/budget_lifecycle_test.go
+new file mode 100644
+index 0000000..bb99d51
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/budget_lifecycle_test.go
+@@ -0,0 +1,190 @@
++package nativebudget
++
++import (
++	"math/big"
++	"testing"
++
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contract"
++	"github.com/ava-labs/libevm/common"
++	"github.com/ava-labs/libevm/core/vm"
++	"github.com/ava-labs/libevm/libevm/stateconf"
++	"github.com/stretchr/testify/require"
++)
++
++type lifecycleStateDB struct {
++	contract.StateDB
++	slots map[common.Address]map[common.Hash]common.Hash
++}
++
++func (s *lifecycleStateDB) GetState(addr common.Address, key common.Hash, _ ...stateconf.StateDBStateOption) common.Hash {
++	return s.slots[addr][key]
++}
++
++func (s *lifecycleStateDB) SetState(addr common.Address, key, value common.Hash, _ ...stateconf.StateDBStateOption) {
++	if s.slots[addr] == nil {
++		s.slots[addr] = make(map[common.Hash]common.Hash)
++	}
++	s.slots[addr][key] = value
++}
++
++type lifecycleBlock struct {
++	contract.BlockContext
++	timestamp uint64
++}
++
++func (b lifecycleBlock) Timestamp() uint64 { return b.timestamp }
++
++type lifecycleState struct {
++	contract.AccessibleState
++	db        *lifecycleStateDB
++	timestamp uint64
++}
++
++func (s lifecycleState) GetStateDB() contract.StateDB { return s.db }
++
++func (s lifecycleState) GetBlockContext() contract.BlockContext {
++	return lifecycleBlock{timestamp: s.timestamp}
++}
++
++func TestNativeBudgetLifecycle(t *testing.T) {
++	state := lifecycleState{db: &lifecycleStateDB{
++		slots: make(map[common.Address]map[common.Hash]common.Hash),
++	}}
++	state.timestamp = 1000
++	alice := common.Address{19: 1}
++	bob := common.Address{19: 2}
++	token := common.Address{19: 3}
++	spender := common.Address{19: 4}
++
++	require.NoError(t, Module.Configurator.Configure(
++		nil, &Config{TrustedExecutor: spender}, state.db, lifecycleBlock{},
++	))
++
++	setInput, err := PackSetBudget(SetBudgetInput{
++		Token: token, Spender: spender, Amount: big.NewInt(100), Expiry: big.NewInt(1100),
++	})
++	require.NoError(t, err)
++
++	readInput, err := PackRemaining(RemainingInput{
++		Owner: alice, Token: token, Spender: spender,
++	})
++	require.NoError(t, err)
++
++	revokeInput, err := PackRevokeBudget(RevokeBudgetInput{
++		Token: token, Spender: spender,
++	})
++	require.NoError(t, err)
++
++	consumeInput, err := PackConsumeBudget(ConsumeBudgetInput{
++		Owner: alice, Token: token, Amount: big.NewInt(40),
++	})
++	require.NoError(t, err)
++
++	overBudgetInput, err := PackConsumeBudget(ConsumeBudgetInput{
++		Owner: alice, Token: token, Amount: big.NewInt(61),
++	})
++	require.NoError(t, err)
++
++	readAmount := func(want int64) {
++		t.Helper()
++		output, _, err := NativeBudgetPrecompile.Run(
++			state, bob, ContractAddress, readInput, RemainingGasCost, true,
++		)
++		require.NoError(t, err)
++		amount, err := UnpackRemainingOutput(output)
++		require.NoError(t, err)
++		require.Equal(t, want, amount.Int64())
++	}
++
++	readAmount(0)
++
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, alice, ContractAddress, setInput, SetBudgetGasCost, false,
++	)
++	require.NoError(t, err)
++	readAmount(100)
++
++	// Bob can only revoke his own budget.
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, bob, ContractAddress, revokeInput, RevokeBudgetGasCost, false,
++	)
++	require.NoError(t, err)
++	readAmount(100)
++
++	// Alice grants Bob a budget, but the chain only trusts spender.
++	bobBudgetInput, err := PackSetBudget(SetBudgetInput{
++		Token: token, Spender: bob, Amount: big.NewInt(25), Expiry: big.NewInt(1100),
++	})
++	require.NoError(t, err)
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, alice, ContractAddress, bobBudgetInput, SetBudgetGasCost, false,
++	)
++	require.NoError(t, err)
++
++	// Bob has enough budget for this request. Only the executor check should reject it.
++	bobConsumeInput, err := PackConsumeBudget(ConsumeBudgetInput{
++		Owner: alice, Token: token, Amount: big.NewInt(10),
++	})
++	require.NoError(t, err)
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, bob, ContractAddress, bobConsumeInput, ConsumeBudgetGasCost, false,
++	)
++	require.ErrorContains(t, err, "caller is not the trusted executor")
++
++	bobRemaining, _ := loadBudget(state.db, alice, token, bob)
++	require.Equal(t, int64(25), bobRemaining.Int64())
++	readAmount(100)
++
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, spender, ContractAddress, consumeInput, ConsumeBudgetGasCost, false,
++	)
++	require.NoError(t, err)
++	readAmount(60)
++
++	// The spender cannot consume 61 when only 60 remain.
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, spender, ContractAddress, overBudgetInput, ConsumeBudgetGasCost, false,
++	)
++	require.Error(t, err)
++	readAmount(60)
++
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, alice, ContractAddress, revokeInput, RevokeBudgetGasCost, false,
++	)
++	require.NoError(t, err)
++	readAmount(0)
++
++	// Set up a fresh budget after revocation.
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, alice, ContractAddress, setInput, SetBudgetGasCost, false,
++	)
++	require.NoError(t, err)
++	readAmount(100)
++
++	// One gas unit below the required cost must leave the budget intact.
++	_, gasLeft, err := NativeBudgetPrecompile.Run(
++		state, spender, ContractAddress, consumeInput, ConsumeBudgetGasCost-1, false,
++	)
++	require.ErrorIs(t, err, vm.ErrOutOfGas)
++	require.Zero(t, gasLeft)
++	readAmount(100)
++
++	// A read-only call cannot consume budget.
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, spender, ContractAddress, consumeInput, ConsumeBudgetGasCost, true,
++	)
++	require.ErrorIs(t, err, vm.ErrWriteProtection)
++	readAmount(100)
++
++	// The budget is expired at its exact expiry timestamp.
++	state.timestamp = 1100
++	readAmount(0)
++	_, _, err = NativeBudgetPrecompile.Run(
++		state, spender, ContractAddress, consumeInput, ConsumeBudgetGasCost, false,
++	)
++	require.ErrorContains(t, err, "budget is unset or expired")
++
++	// Inspect storage directly: the failed call did not deduct anything.
++	amount, _ := loadBudget(state.db, alice, token, spender)
++	require.Equal(t, int64(100), amount.Int64())
++}
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/config.go b/graft/subnet-evm/precompile/contracts/nativebudget/config.go
+new file mode 100644
+index 0000000..05ab48c
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/config.go
+@@ -0,0 +1,64 @@
++// Code generated
++// This file is a generated precompile contract config with stubbed abstract functions.
++// The file is generated by a template. Please inspect every code and comment in this file before use.
++
++package nativebudget
++
++import (
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/precompileconfig"
++	"github.com/ava-labs/libevm/common"
++)
++
++var _ precompileconfig.Config = (*Config)(nil)
++
++// Config implements the precompileconfig.Config interface and
++// adds specific configuration for NativeBudget.
++type Config struct {
++	precompileconfig.Upgrade
++	TrustedExecutor common.Address `json:"trustedExecutor"`
++}
++
++// NewConfig returns a config for a network upgrade at [blockTimestamp] that enables
++// NativeBudget.
++func NewConfig(blockTimestamp *uint64) *Config {
++	return &Config{
++		Upgrade: precompileconfig.Upgrade{BlockTimestamp: blockTimestamp},
++	}
++}
++
++// NewDisableConfig returns config for a network upgrade at [blockTimestamp]
++// that disables NativeBudget.
++func NewDisableConfig(blockTimestamp *uint64) *Config {
++	return &Config{
++		Upgrade: precompileconfig.Upgrade{
++			BlockTimestamp: blockTimestamp,
++			Disable:        true,
++		},
++	}
++}
++
++// Key returns the key for the NativeBudget precompileconfig.
++// This should be the same key as used in the precompile module.
++func (*Config) Key() string { return ConfigKey }
++
++// Verify tries to verify Config and returns an error accordingly.
++func (c *Config) Verify(chainConfig precompileconfig.ChainConfig) error {
++	// CUSTOM CODE STARTS HERE
++	// Add your own custom verify code for Config here
++	// and return an error accordingly
++	return nil
++}
++
++// Equal returns true if [s] is a [*Config] and it has been configured identical to [c].
++func (c *Config) Equal(s precompileconfig.Config) bool {
++	// typecast before comparison
++	other, ok := (s).(*Config)
++	if !ok {
++		return false
++	}
++	// CUSTOM CODE STARTS HERE
++	// modify this boolean accordingly with your custom Config, to check if [other] and the current [c] are equal
++	// if Config contains only Upgrade you can skip modifying it.
++	return c.Upgrade.Equal(&other.Upgrade) &&
++		c.TrustedExecutor == other.TrustedExecutor
++}
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/config_test.go b/graft/subnet-evm/precompile/contracts/nativebudget/config_test.go
+new file mode 100644
+index 0000000..365aade
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/config_test.go
+@@ -0,0 +1,68 @@
++// Code generated
++// This file is a generated precompile config test with the skeleton of test functions.
++// The file is generated by a template. Please inspect every code and comment in this file before use.
++
++package nativebudget
++
++import (
++	"testing"
++
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/precompileconfig"
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/precompiletest"
++
++	"github.com/ava-labs/avalanchego/graft/evm/utils"
++	"go.uber.org/mock/gomock"
++)
++
++// TestVerify tests the verification of Config.
++func TestVerify(t *testing.T) {
++	tests := map[string]precompiletest.ConfigVerifyTest{
++		"valid config": {
++			Config: NewConfig(utils.PointerTo[uint64](3)),
++			ChainConfig: func() precompileconfig.ChainConfig {
++				config := precompileconfig.NewMockChainConfig(gomock.NewController(t))
++				config.EXPECT().IsDurango(gomock.Any()).Return(true).AnyTimes()
++				return config
++			}(),
++			ExpectedError: nil,
++		},
++		// CUSTOM CODE STARTS HERE
++		// Add your own Verify tests here, e.g.:
++		// "your custom test name": {
++		// 	Config: NewConfig(utils.PointerTo[uint64](3),),
++		// 	ExpectedError: ErrYourCustomError,
++		// },
++	}
++	// Run verify tests.
++	precompiletest.RunVerifyTests(t, tests)
++}
++
++// TestEqual tests the equality of Config with other precompile configs.
++func TestEqual(t *testing.T) {
++	tests := map[string]precompiletest.ConfigEqualTest{
++		"non-nil config and nil other": {
++			Config:   NewConfig(utils.PointerTo[uint64](3)),
++			Other:    nil,
++			Expected: false,
++		},
++		"different type": {
++			Config:   NewConfig(utils.PointerTo[uint64](3)),
++			Other:    precompileconfig.NewMockConfig(gomock.NewController(t)),
++			Expected: false,
++		},
++		"different timestamp": {
++			Config:   NewConfig(utils.PointerTo[uint64](3)),
++			Other:    NewConfig(utils.PointerTo[uint64](4)),
++			Expected: false,
++		},
++		"same config": {
++			Config:   NewConfig(utils.PointerTo[uint64](3)),
++			Other:    NewConfig(utils.PointerTo[uint64](3)),
++			Expected: true,
++		},
++		// CUSTOM CODE STARTS HERE
++		// Add your own Equal tests here
++	}
++	// Run equal tests.
++	precompiletest.RunEqualTests(t, tests)
++}
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/contract.abi b/graft/subnet-evm/precompile/contracts/nativebudget/contract.abi
+new file mode 100644
+index 0000000..56206df
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/contract.abi
+@@ -0,0 +1,100 @@
++[
++  {
++    "inputs": [
++      {
++        "internalType": "address",
++        "name": "owner",
++        "type": "address"
++      },
++      {
++        "internalType": "address",
++        "name": "token",
++        "type": "address"
++      },
++      {
++        "internalType": "uint256",
++        "name": "amount",
++        "type": "uint256"
++      }
++    ],
++    "name": "consumeBudget",
++    "outputs": [],
++    "stateMutability": "nonpayable",
++    "type": "function"
++  },
++  {
++    "inputs": [
++      {
++        "internalType": "address",
++        "name": "owner",
++        "type": "address"
++      },
++      {
++        "internalType": "address",
++        "name": "token",
++        "type": "address"
++      },
++      {
++        "internalType": "address",
++        "name": "spender",
++        "type": "address"
++      }
++    ],
++    "name": "remaining",
++    "outputs": [
++      {
++        "internalType": "uint256",
++        "name": "amount",
++        "type": "uint256"
++      }
++    ],
++    "stateMutability": "view",
++    "type": "function"
++  },
++  {
++    "inputs": [
++      {
++        "internalType": "address",
++        "name": "token",
++        "type": "address"
++      },
++      {
++        "internalType": "address",
++        "name": "spender",
++        "type": "address"
++      }
++    ],
++    "name": "revokeBudget",
++    "outputs": [],
++    "stateMutability": "nonpayable",
++    "type": "function"
++  },
++  {
++    "inputs": [
++      {
++        "internalType": "address",
++        "name": "token",
++        "type": "address"
++      },
++      {
++        "internalType": "address",
++        "name": "spender",
++        "type": "address"
++      },
++      {
++        "internalType": "uint256",
++        "name": "amount",
++        "type": "uint256"
++      },
++      {
++        "internalType": "uint256",
++        "name": "expiry",
++        "type": "uint256"
++      }
++    ],
++    "name": "setBudget",
++    "outputs": [],
++    "stateMutability": "nonpayable",
++    "type": "function"
++  }
++]
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/contract.go b/graft/subnet-evm/precompile/contracts/nativebudget/contract.go
+new file mode 100644
+index 0000000..32c9a69
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/contract.go
+@@ -0,0 +1,317 @@
++// Code generated
++// This file is a generated precompile contract config with stubbed abstract functions.
++// The file is generated by a template. Please inspect every code and comment in this file before use.
++
++package nativebudget
++
++import (
++	"errors"
++	"fmt"
++	"math/big"
++
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contract"
++	"github.com/ava-labs/libevm/accounts/abi"
++
++	_ "embed"
++
++	"github.com/ava-labs/libevm/common"
++	"github.com/ava-labs/libevm/core/types"
++	"github.com/ava-labs/libevm/core/vm"
++)
++
++const (
++	// Gas costs for each function. These are set to 1 by default.
++	// You should set a gas cost for each function in your contract.
++	// Generally, you should not set gas costs very low as this may cause your network to be vulnerable to DoS attacks.
++	// There are some predefined gas costs in contract/utils.go that you can use.
++	ConsumeBudgetGasCost uint64 = 3*contract.ReadGasCostPerSlot + 2*contract.WriteGasCostPerSlot /* SET A GAS COST HERE */
++	RemainingGasCost     uint64 = 2 * contract.ReadGasCostPerSlot                                /* SET A GAS COST HERE */
++	RevokeBudgetGasCost  uint64 = 2 * contract.WriteGasCostPerSlot                               /* SET A GAS COST HERE */
++	SetBudgetGasCost     uint64 = 2 * contract.WriteGasCostPerSlot                               /* SET A GAS COST HERE */
++)
++
++// CUSTOM CODE STARTS HERE
++// Reference imports to suppress errors from unused imports. This code and any unnecessary imports can be removed.
++var (
++	_ = abi.JSON
++	_ = errors.New
++	_ = big.NewInt
++	_ = vm.ErrOutOfGas
++	_ = common.Big0
++	_ = types.Log{}
++)
++
++// Singleton StatefulPrecompiledContract and signatures.
++var (
++
++	// NativeBudgetRawABI contains the raw ABI of NativeBudget contract.
++	//go:embed contract.abi
++	NativeBudgetRawABI string
++
++	NativeBudgetABI = contract.ParseABI(NativeBudgetRawABI)
++
++	NativeBudgetPrecompile = createNativeBudgetPrecompile()
++)
++
++type ConsumeBudgetInput struct {
++	Owner  common.Address
++	Token  common.Address
++	Amount *big.Int
++}
++
++type RemainingInput struct {
++	Owner   common.Address
++	Token   common.Address
++	Spender common.Address
++}
++
++type RevokeBudgetInput struct {
++	Token   common.Address
++	Spender common.Address
++}
++
++type SetBudgetInput struct {
++	Token   common.Address
++	Spender common.Address
++	Amount  *big.Int
++	Expiry  *big.Int
++}
++
++// UnpackConsumeBudgetInput attempts to unpack [input] as ConsumeBudgetInput
++// assumes that [input] does not include selector (omits first 4 func signature bytes)
++func UnpackConsumeBudgetInput(input []byte) (ConsumeBudgetInput, error) {
++	inputStruct := ConsumeBudgetInput{}
++	err := NativeBudgetABI.UnpackInputIntoInterface(&inputStruct, "consumeBudget", input)
++
++	return inputStruct, err
++}
++
++// PackConsumeBudget packs [inputStruct] of type ConsumeBudgetInput into the appropriate arguments for consumeBudget.
++func PackConsumeBudget(inputStruct ConsumeBudgetInput) ([]byte, error) {
++	return NativeBudgetABI.Pack("consumeBudget", inputStruct.Owner, inputStruct.Token, inputStruct.Amount)
++}
++
++func consumeBudget(accessibleState contract.AccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
++	if remainingGas, err = contract.DeductGas(suppliedGas, ConsumeBudgetGasCost); err != nil {
++		return nil, 0, err
++	}
++	if readOnly {
++		return nil, remainingGas, vm.ErrWriteProtection
++	}
++	// attempts to unpack [input] into the arguments to the ConsumeBudgetInput.
++	// Assumes that [input] does not include selector
++	// You can use unpacked [inputStruct] variable in your code
++	inputStruct, err := UnpackConsumeBudgetInput(input)
++	if err != nil {
++		return nil, remainingGas, err
++	}
++	if !fitsUint256(inputStruct.Amount) || inputStruct.Amount.Sign() == 0 {
++		return nil, remainingGas, fmt.Errorf("consume amount must be a positive uint256")
++	}
++
++	state := accessibleState.GetStateDB()
++	executorSlot := state.GetState(ContractAddress, trustedExecutorKey)
++	executor := common.BytesToAddress(executorSlot.Bytes())
++	if executor == (common.Address{}) || caller != executor {
++		return nil, remainingGas, fmt.Errorf("caller is not the trusted executor")
++	}
++
++	amount, expiry := loadBudget(state, inputStruct.Owner, inputStruct.Token, caller)
++	blockTime := new(big.Int).SetUint64(accessibleState.GetBlockContext().Timestamp())
++	if expiry.Cmp(blockTime) <= 0 {
++		return nil, remainingGas, fmt.Errorf("budget is unset or expired")
++	}
++	if amount.Cmp(inputStruct.Amount) < 0 {
++		return nil, remainingGas, fmt.Errorf("insufficient budget")
++	}
++
++	amount.Sub(amount, inputStruct.Amount)
++	if err := storeBudget(state, inputStruct.Owner, inputStruct.Token, caller, amount, expiry); err != nil {
++		return nil, remainingGas, err
++	}
++	return []byte{}, remainingGas, nil
++}
++
++// UnpackRemainingInput attempts to unpack [input] as RemainingInput
++// assumes that [input] does not include selector (omits first 4 func signature bytes)
++func UnpackRemainingInput(input []byte) (RemainingInput, error) {
++	inputStruct := RemainingInput{}
++	err := NativeBudgetABI.UnpackInputIntoInterface(&inputStruct, "remaining", input)
++
++	return inputStruct, err
++}
++
++// PackRemaining packs [inputStruct] of type RemainingInput into the appropriate arguments for remaining.
++func PackRemaining(inputStruct RemainingInput) ([]byte, error) {
++	return NativeBudgetABI.Pack("remaining", inputStruct.Owner, inputStruct.Token, inputStruct.Spender)
++}
++
++// PackRemainingOutput attempts to pack given amount of type *big.Int
++// to conform the ABI outputs.
++func PackRemainingOutput(amount *big.Int) ([]byte, error) {
++	return NativeBudgetABI.PackOutput("remaining", amount)
++}
++
++// UnpackRemainingOutput attempts to unpack given [output] into the *big.Int type output
++// assumes that [output] does not include selector (omits first 4 func signature bytes)
++func UnpackRemainingOutput(output []byte) (*big.Int, error) {
++	res, err := NativeBudgetABI.Unpack("remaining", output)
++	if err != nil {
++		return new(big.Int), err
++	}
++	unpacked := *abi.ConvertType(res[0], new(*big.Int)).(**big.Int)
++	return unpacked, nil
++}
++
++func remaining(accessibleState contract.AccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
++	if remainingGas, err = contract.DeductGas(suppliedGas, RemainingGasCost); err != nil {
++		return nil, 0, err
++	}
++
++	inputStruct, err := UnpackRemainingInput(input)
++	if err != nil {
++		return nil, remainingGas, err
++	}
++
++	amount, expiry := loadBudget(
++		accessibleState.GetStateDB(),
++		inputStruct.Owner,
++		inputStruct.Token,
++		inputStruct.Spender,
++	)
++	blockTime := new(big.Int).SetUint64(accessibleState.GetBlockContext().Timestamp())
++	if expiry.Cmp(blockTime) <= 0 {
++		amount.SetUint64(0)
++	}
++
++	output, err := PackRemainingOutput(amount)
++	return output, remainingGas, err
++}
++
++// UnpackRevokeBudgetInput attempts to unpack [input] as RevokeBudgetInput
++// assumes that [input] does not include selector (omits first 4 func signature bytes)
++func UnpackRevokeBudgetInput(input []byte) (RevokeBudgetInput, error) {
++	inputStruct := RevokeBudgetInput{}
++	err := NativeBudgetABI.UnpackInputIntoInterface(&inputStruct, "revokeBudget", input)
++
++	return inputStruct, err
++}
++
++// PackRevokeBudget packs [inputStruct] of type RevokeBudgetInput into the appropriate arguments for revokeBudget.
++func PackRevokeBudget(inputStruct RevokeBudgetInput) ([]byte, error) {
++	return NativeBudgetABI.Pack("revokeBudget", inputStruct.Token, inputStruct.Spender)
++}
++
++func revokeBudget(accessibleState contract.AccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
++	if remainingGas, err = contract.DeductGas(suppliedGas, RevokeBudgetGasCost); err != nil {
++		return nil, 0, err
++	}
++	if readOnly {
++		return nil, remainingGas, vm.ErrWriteProtection
++	}
++
++	inputStruct, err := UnpackRevokeBudgetInput(input)
++	if err != nil {
++		return nil, remainingGas, err
++	}
++
++	zeroAddress := common.Address{}
++	if inputStruct.Token == zeroAddress || inputStruct.Spender == zeroAddress {
++		return nil, remainingGas, fmt.Errorf("token and spender must be non-zero addresses")
++	}
++
++	zero := new(big.Int)
++	if err := storeBudget(
++		accessibleState.GetStateDB(),
++		caller,
++		inputStruct.Token,
++		inputStruct.Spender,
++		zero,
++		zero,
++	); err != nil {
++		return nil, remainingGas, err
++	}
++
++	return []byte{}, remainingGas, nil
++}
++
++// UnpackSetBudgetInput attempts to unpack [input] as SetBudgetInput
++// assumes that [input] does not include selector (omits first 4 func signature bytes)
++func UnpackSetBudgetInput(input []byte) (SetBudgetInput, error) {
++	inputStruct := SetBudgetInput{}
++	err := NativeBudgetABI.UnpackInputIntoInterface(&inputStruct, "setBudget", input)
++
++	return inputStruct, err
++}
++
++// PackSetBudget packs [inputStruct] of type SetBudgetInput into the appropriate arguments for setBudget.
++func PackSetBudget(inputStruct SetBudgetInput) ([]byte, error) {
++	return NativeBudgetABI.Pack("setBudget", inputStruct.Token, inputStruct.Spender, inputStruct.Amount, inputStruct.Expiry)
++}
++
++func setBudget(accessibleState contract.AccessibleState, caller common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
++	if remainingGas, err = contract.DeductGas(suppliedGas, SetBudgetGasCost); err != nil {
++		return nil, 0, err
++	}
++	if readOnly {
++		return nil, remainingGas, vm.ErrWriteProtection
++	}
++
++	inputStruct, err := UnpackSetBudgetInput(input)
++	if err != nil {
++		return nil, remainingGas, err
++	}
++
++	zeroAddress := common.Address{}
++	if inputStruct.Token == zeroAddress || inputStruct.Spender == zeroAddress {
++		return nil, remainingGas, fmt.Errorf("token and spender must be non-zero addresses")
++	}
++	if !fitsUint256(inputStruct.Amount) || inputStruct.Amount.Sign() == 0 {
++		return nil, remainingGas, fmt.Errorf("budget amount must be a positive uint256")
++	}
++
++	blockTime := new(big.Int).SetUint64(accessibleState.GetBlockContext().Timestamp())
++	if !fitsUint256(inputStruct.Expiry) || inputStruct.Expiry.Cmp(blockTime) <= 0 {
++		return nil, remainingGas, fmt.Errorf("budget expiry must be after the block timestamp")
++	}
++
++	if err := storeBudget(
++		accessibleState.GetStateDB(),
++		caller,
++		inputStruct.Token,
++		inputStruct.Spender,
++		inputStruct.Amount,
++		inputStruct.Expiry,
++	); err != nil {
++		return nil, remainingGas, err
++	}
++
++	return []byte{}, remainingGas, nil
++}
++
++// createNativeBudgetPrecompile returns a StatefulPrecompiledContract with getters and setters for the precompile.
++
++func createNativeBudgetPrecompile() contract.StatefulPrecompiledContract {
++	var functions []*contract.StatefulPrecompileFunction
++
++	abiFunctionMap := map[string]contract.RunStatefulPrecompileFunc{
++		"consumeBudget": consumeBudget,
++		"remaining":     remaining,
++		"revokeBudget":  revokeBudget,
++		"setBudget":     setBudget,
++	}
++
++	for name, function := range abiFunctionMap {
++		method, ok := NativeBudgetABI.Methods[name]
++		if !ok {
++			panic(fmt.Errorf("given method (%s) does not exist in the ABI", name))
++		}
++		functions = append(functions, contract.NewStatefulPrecompileFunction(method.ID, function))
++	}
++	// Construct the contract with no fallback function.
++	statefulContract, err := contract.NewStatefulPrecompileContract(nil, functions)
++	if err != nil {
++		panic(err)
++	}
++	return statefulContract
++}
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/contract_test.go b/graft/subnet-evm/precompile/contracts/nativebudget/contract_test.go
+new file mode 100644
+index 0000000..03fbbc8
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/contract_test.go
+@@ -0,0 +1,146 @@
++// Code generated
++// This file is a generated precompile contract test with the skeleton of test functions.
++// The file is generated by a template. Please inspect every code and comment in this file before use.
++
++package nativebudget
++
++import (
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/precompiletest"
++	"github.com/ava-labs/libevm/common"
++	"github.com/ava-labs/libevm/core/vm"
++	"github.com/stretchr/testify/require"
++	"math/big"
++	"testing"
++)
++
++var (
++	_ = vm.ErrOutOfGas
++	_ = big.NewInt
++	_ = common.Big0
++	_ = require.New
++)
++
++// These tests are run against the precompile contract directly with
++// the given input and expected output. They're just a guide to
++// help you write your own tests. These tests are for general cases like
++// allowlist, readOnly behaviour, and gas cost. You should write your own
++// tests for specific cases.
++var (
++	tests = []precompiletest.PrecompileTest{
++		{
++			Name:   "readOnly consumeBudget should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := ConsumeBudgetInput{}
++				input, err := PackConsumeBudget(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: ConsumeBudgetGasCost,
++			ReadOnly:    true,
++			ExpectedErr: vm.ErrWriteProtection,
++		},
++		{
++			Name:   "insufficient gas for consumeBudget should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := ConsumeBudgetInput{}
++				input, err := PackConsumeBudget(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: ConsumeBudgetGasCost - 1,
++			ReadOnly:    false,
++			ExpectedErr: vm.ErrOutOfGas,
++		},
++		{
++			Name:   "insufficient gas for remaining should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := RemainingInput{}
++				input, err := PackRemaining(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: RemainingGasCost - 1,
++			ReadOnly:    false,
++			ExpectedErr: vm.ErrOutOfGas,
++		},
++		{
++			Name:   "readOnly revokeBudget should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := RevokeBudgetInput{}
++				input, err := PackRevokeBudget(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: RevokeBudgetGasCost,
++			ReadOnly:    true,
++			ExpectedErr: vm.ErrWriteProtection,
++		},
++		{
++			Name:   "insufficient gas for revokeBudget should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := RevokeBudgetInput{}
++				input, err := PackRevokeBudget(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: RevokeBudgetGasCost - 1,
++			ReadOnly:    false,
++			ExpectedErr: vm.ErrOutOfGas,
++		},
++		{
++			Name:   "readOnly setBudget should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := SetBudgetInput{}
++				input, err := PackSetBudget(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: SetBudgetGasCost,
++			ReadOnly:    true,
++			ExpectedErr: vm.ErrWriteProtection,
++		},
++		{
++			Name:   "insufficient gas for setBudget should fail",
++			Caller: common.Address{1},
++			InputFn: func(t testing.TB) []byte {
++				// CUSTOM CODE STARTS HERE
++				// populate test input here
++				testInput := SetBudgetInput{}
++				input, err := PackSetBudget(testInput)
++				require.NoError(t, err)
++				return input
++			},
++			SuppliedGas: SetBudgetGasCost - 1,
++			ReadOnly:    false,
++			ExpectedErr: vm.ErrOutOfGas,
++		},
++	}
++)
++
++// TestNativeBudgetRun tests the Run function of the precompile contract.
++func TestNativeBudgetRun(t *testing.T) {
++	// Run tests.
++	for _, test := range tests {
++		t.Run(test.Name, func(t *testing.T) {
++			test.Run(t, Module)
++		})
++	}
++}
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/event.go b/graft/subnet-evm/precompile/contracts/nativebudget/event.go
+new file mode 100644
+index 0000000..866678f
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/event.go
+@@ -0,0 +1,50 @@
++// Code generated
++// This file is a generated precompile contract config with stubbed abstract functions.
++// The file is generated by a template. Please inspect every code and comment in this file before use.
++
++package nativebudget
++
++import (
++	"math/big"
++
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contract"
++	"github.com/ava-labs/libevm/common"
++)
++
++// CUSTOM CODE STARTS HERE
++// Reference imports to suppress errors from unused imports. This code and any unnecessary imports can be removed.
++var (
++	_ = big.NewInt
++	_ = common.Big0
++	_ = contract.LogGas
++)
++
++/* NOTE: Events can only be emitted in state-changing functions. So you cannot use events in read-only (view) functions.
++Events are generally emitted at the end of a state-changing function with AddLog method of the StateDB. The AddLog method takes 4 arguments:
++	1. Address of the contract that emitted the event.
++	2. Topic hashes of the event.
++	3. Encoded non-indexed data of the event.
++	4. Block number at which the event was emitted.
++The first argument is the address of the contract that emitted the event.
++Topics can be at most 4 elements, the first topic is the hash of the event signature and the rest are the indexed event arguments. There can be at most 3 indexed arguments.
++Topics cannot be fully unpacked into their original values since they're 32-bytes hashes.
++The non-indexed arguments are encoded using the ABI encoding scheme. The non-indexed arguments can be unpacked into their original values.
++Before packing the event, you need to calculate the gas cost of the event. The gas cost of an event is the base gas cost + the gas cost of the topics + the gas cost of the non-indexed data.
++See Get{EvetName}EventGasCost functions for more details.
++You can use the following code to emit an event in your state-changing precompile functions (generated packer might be different)):
++topics, data, err := PackMyEvent(
++	topic1,
++	topic2,
++	data1,
++	data2,
++)
++if err != nil {
++	return nil, remainingGas, err
++}
++accessibleState.GetStateDB().AddLog(&types.Log{
++	Address:     ContractAddress,
++	Topics:      topics,
++	Data:        data,
++	BlockNumber: accessibleState.GetBlockContext().Number().Uint64(),
++})
++*/
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/module.go b/graft/subnet-evm/precompile/contracts/nativebudget/module.go
+new file mode 100644
+index 0000000..fcbd9af
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/module.go
+@@ -0,0 +1,73 @@
++// Code generated
++// This file is a generated precompile contract config with stubbed abstract functions.
++// The file is generated by a template. Please inspect every code and comment in this file before use.
++
++package nativebudget
++
++import (
++	"fmt"
++
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contract"
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/modules"
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/precompileconfig"
++
++	"github.com/ava-labs/libevm/common"
++)
++
++var _ contract.Configurator = (*configurator)(nil)
++
++// ConfigKey is the key used in json config files to specify this precompile config.
++// must be unique across all precompiles.
++const ConfigKey = "nativeBudgetConfig"
++
++// ContractAddress is the defined address of the precompile contract.
++// This should be unique across all precompile contracts.
++// See precompile/registry/registry.go for registered precompile contracts and more information.
++var ContractAddress = common.HexToAddress("0x0300000000000000000000000000000000000000")
++
++// Module is the precompile module. It is used to register the precompile contract.
++var Module = modules.Module{
++	ConfigKey:    ConfigKey,
++	Address:      ContractAddress,
++	Contract:     NativeBudgetPrecompile,
++	Configurator: &configurator{},
++}
++
++type configurator struct{}
++
++func init() {
++	// Register the precompile module.
++	// Each precompile contract registers itself through [RegisterModule] function.
++	if err := modules.RegisterModule(Module); err != nil {
++		panic(err)
++	}
++}
++
++// MakeConfig returns a new precompile config instance.
++// This is required to Marshal/Unmarshal the precompile config.
++func (*configurator) MakeConfig() precompileconfig.Config {
++	return new(Config)
++}
++
++// Configure configures [state] with the given [cfg] precompileconfig.
++// This function is called by the EVM once per precompile contract activation.
++// You can use this function to set up your precompile contract's initial state,
++// by using the [cfg] config and [state] stateDB.
++func (*configurator) Configure(
++	chainConfig precompileconfig.ChainConfig,
++	cfg precompileconfig.Config,
++	state contract.StateDB,
++	blockContext contract.ConfigurationBlockContext,
++) error {
++	config, ok := cfg.(*Config)
++	if !ok {
++		return fmt.Errorf("expected config type %T, got %T", &Config{}, cfg)
++	}
++
++	state.SetState(
++		ContractAddress,
++		trustedExecutorKey,
++		common.BytesToHash(config.TrustedExecutor.Bytes()),
++	)
++	return nil
++}
+diff --git a/graft/subnet-evm/precompile/contracts/nativebudget/storage.go b/graft/subnet-evm/precompile/contracts/nativebudget/storage.go
+new file mode 100644
+index 0000000..33d7bd8
+--- /dev/null
++++ b/graft/subnet-evm/precompile/contracts/nativebudget/storage.go
+@@ -0,0 +1,43 @@
++package nativebudget
++
++import (
++	"fmt"
++	"math/big"
++
++	"github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contract"
++	"github.com/ava-labs/libevm/common"
++	"github.com/ava-labs/libevm/crypto"
++)
++
++var trustedExecutorKey = crypto.Keccak256Hash([]byte("nativebudget.v1.trustedExecutor"))
++
++func budgetStorageKeys(owner, token, spender common.Address) (common.Hash, common.Hash) {
++	remainingKey := crypto.Keccak256Hash(
++		[]byte("nativebudget.v1.remaining"), owner[:], token[:], spender[:],
++	)
++	expiryKey := crypto.Keccak256Hash(
++		[]byte("nativebudget.v1.expiry"), owner[:], token[:], spender[:],
++	)
++	return remainingKey, expiryKey
++}
++
++func loadBudget(state contract.StateDB, owner, token, spender common.Address) (*big.Int, *big.Int) {
++	remainingKey, expiryKey := budgetStorageKeys(owner, token, spender)
++	return state.GetState(ContractAddress, remainingKey).Big(),
++		state.GetState(ContractAddress, expiryKey).Big()
++}
++
++func storeBudget(state contract.StateDB, owner, token, spender common.Address, remaining, expiry *big.Int) error {
++	if !fitsUint256(remaining) || !fitsUint256(expiry) {
++		return fmt.Errorf("remaining and expiry must fit uint256")
++	}
++
++	remainingKey, expiryKey := budgetStorageKeys(owner, token, spender)
++	state.SetState(ContractAddress, remainingKey, common.BigToHash(remaining))
++	state.SetState(ContractAddress, expiryKey, common.BigToHash(expiry))
++	return nil
++}
++
++func fitsUint256(value *big.Int) bool {
++	return value != nil && value.Sign() >= 0 && value.BitLen() <= 256
++}
+diff --git a/graft/subnet-evm/precompile/registry/registry.go b/graft/subnet-evm/precompile/registry/registry.go
+index fe6da76..3ca0898 100644
+--- a/graft/subnet-evm/precompile/registry/registry.go
++++ b/graft/subnet-evm/precompile/registry/registry.go
+@@ -11,6 +11,7 @@ import (
+ 	// _ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/gaspricemanager"
+ 	_ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/deployerallowlist"
+ 	_ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/feemanager"
++	_ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/nativebudget"
+ 	_ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/nativeminter"
+ 	_ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/rewardmanager"
+ 	_ "github.com/ava-labs/avalanchego/graft/subnet-evm/precompile/contracts/txallowlist"

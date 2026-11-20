@@ -196,7 +196,7 @@ contract AllowanceManager is ReentrancyGuard {
         address token,
         uint256 amount,
         uint256 expiry
-    ) external nonReentrant {
+    ) external virtual nonReentrant {
         if (token == address(0)) {
             revert InvalidToken();
         }
@@ -217,7 +217,7 @@ contract AllowanceManager is ReentrancyGuard {
         emit BudgetSet(msg.sender, token, amount, expiry);
     }
 
-    function revoke(address token) external nonReentrant {
+    function revoke(address token) external virtual nonReentrant {
         if (token == address(0)) {
             revert InvalidToken();
         }
@@ -230,7 +230,7 @@ contract AllowanceManager is ReentrancyGuard {
     function remaining(
         address owner,
         address token
-    ) external view returns (uint256) {
+    ) external view virtual returns (uint256) {
         Budget storage budget = budgets[owner][token];
 
         if (block.timestamp >= budget.expiry) {
@@ -492,7 +492,7 @@ contract AllowanceManager is ReentrancyGuard {
         address owner,
         address token,
         uint256 amount
-    ) internal {
+    ) internal virtual {
         if (token == address(0)) {
             revert InvalidToken();
         }

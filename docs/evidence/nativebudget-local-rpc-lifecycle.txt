@@ -1,0 +1,98 @@
+NativeBudget local RPC lifecycle
+AvalancheGo: 1.15.2
+Upstream commit: 4bb5c1dc13e1b6ff4eaf49fe8674666fbb342a17
+RPCChainVM: 47
+EVM chain ID: 99999
+Precompile: 0x0300000000000000000000000000000000000000
+Implementation patch SHA-256: 63337d7a0abee39ece27dba3b29d1d84a43c6badcbc694caa005222648223ad5
+VM binary SHA-256: 0e444f888fad987a6473356cced94550a9ed3b84fb3423c5ed687db6e083884b
+
+setBudget: tx=0x85ccae82d3bc3a6ee2517055503e4ca67a5c2126d804cf832410a221fe47e9ac status=1 block=1 gas=61876
+remaining_after_setBudget: 100
+consumeBudget: tx=0x32ce040bef06fa1b0b5cbf72dc085ee5a269e21744099d16c35751c7bb415c77 status=1 block=2 gas=71712
+remaining_after_consumeBudget: 60
+revokeBudget: tx=0xfc80dbc7cf2b39d90d14f10b2c64db38128cab1828b04bae77e125180f4cf07a status=1 block=3 gas=61572
+remaining_after_revokeBudget: 0
+PASS: NativeBudget local RPC lifecycle
+
+NativeBudget local RPC rejections (separate local network run)
+chain_id: 99999
+set_budget: tx=0x4cb210353a18fcb631fa75ea984a46ff0ff513dca53b7f4296cecc6d76eee587 status=1 block=1 gas=61876
+remaining_after_set_budget: 100
+unapproved_spender: tx=0x974edc69cf4ff7d11a55d63af2c363bba3bae7f1fea8483ca0b4f616bc15f359 status=0 block=2 gas=500000
+remaining_after_unapproved_spender: 100
+over_budget: tx=0xaddc6eb8f48c54a1698e0df18c35460e61d8865d694cc6fea6f208c99b38eb74 status=0 block=3 gas=500000
+remaining_after_over_budget: 100
+PASS: NativeBudget local RPC rejections
+
+PrecompileAllowanceManager deposit and rollback (separate local network run)
+chain_id: 99999
+manager: 0x52C84043CD9c865236f11d9Fc9F56aa003c1f922
+token: 0x17aB05351fC94a1a67Bf3f56DdbB941aE6c63E25
+vault: 0x5aa01B3b5877255cE50cc55e8986a7a5fe29C70e
+adapter: 0x5DB9A7629912EBF95876228C24A848de0bfB43A9
+native_set_budget: tx=0xc4efca920f008c8c3e12706ab01c999d1e277108b447905b1c679ca7772d1bbc status=1 block=10 gas=62104
+after_set_remaining: 100
+deposit_under_cap: tx=0x656e09e6a9183097ac79470661bc4129071f9a7c63da7a3dbbd5dd14dd484a5b status=1 block=11 gas=342879
+after_deposit: remaining=60 owner_assets=60 owner_shares=40 vault_assets=40
+eth_call revert reason: VaultAdapter.InsufficientShares
+deposit_reverted: tx=0xa7fd96ae25dadd3f273342efe8f805bc49e866b5c62130f90dc17a41841ed53a status=0 block=12 gas=280941
+after_revert: remaining=60 owner_assets=60 owner_shares=40 vault_assets=40
+PASS: PrecompileAllowanceManager local deposit and rollback
+
+PrecompileAllowanceManager cap and revocation (separate local network run)
+chain_id: 99999
+native_set_budget: tx=0x1875c92c1b6146839393113f24fcf0eddbd56049f090d1a459bd7e5403fd5a7d status=1 block=10 gas=62104
+deposit_over_cap_revert: BudgetExceeded(100,101)
+deposit_over_cap: tx=0xd5dada7020612eefe37344ec62d684451c75b57795b8be59d7155da0fea60ffe status=0 block=11 gas=52161
+after_deposit_over_cap: remaining=100 owner_assets=200 owner_shares=0 vault_assets=0 owner_allowance=200
+native_revoke_budget: tx=0xa87d36f19e7cf99b6a0124d0e1fdc56c25e3e8282c6db6ab7d9f8fa0c5c8ba6b status=1 block=12 gas=61800
+deposit_after_revoke_revert: BudgetExceeded(0,1)
+deposit_after_revoke: tx=0x2c11a9c813f8377bfc20d7d8a88aa98848f3278f6daa7dfb221272218bc18e8b status=0 block=13 gas=52161
+after_deposit_after_revoke: remaining=0 owner_assets=200 owner_shares=0 vault_assets=0 owner_allowance=200
+PASS: PrecompileAllowanceManager local cap and revocation
+
+NativeBudget trusted executor (separate local network run)
+chain_id: 99999
+trusted_executor: 0x52C84043CD9c865236f11d9Fc9F56aa003c1f922
+patch_sha256: 06c8d05099c2960caf78c2fe1902742fc793754ccb324051cca90c60457892f1
+vm_binary_sha256: 8b015978db793bb336dd6de3a2aeb43f5f61d894cf3e17b4ae370c85ea82a34e
+wallet_budget_before: 25
+trusted_manager_deposit: tx=0x0a5bfc0f6589e56abc2633a41e43b1e66957f357060b312e07b7726e0d814d5b status=1 block=12 gas=347879
+manager_budget_after_deposit: 60
+owner_shares: 40
+untrusted_wallet_consume: tx=0xe7aa4d7120c407eda1dfefa7d293df587ad0cc5c0c4b7e28054c8de1902cc588 status=0 block=13 gas=5000000
+wallet_budget_after_rejection: 25
+manager_budget_after_rejection: 60
+PASS: NativeBudget trusted executor local RPC
+
+Trusted executor regression (separate local network run)
+chain_id: 99999
+vm_binary_sha256: 8b015978db793bb336dd6de3a2aeb43f5f61d894cf3e17b4ae370c85ea82a34e
+native_set_budget: tx=0x4fc16650ec469ecd5ed53cd282fbdcaabe0e5a147e116c122cf377eb619dfd11 status=1 block=10
+deposit_under_cap: tx=0x94669a6338961268e9f990ee727c020c7162367f4c72a2270bc24f2ae6044151 status=1 block=11
+after_deposit: remaining=60 owner_assets=160 owner_shares=40 vault_assets=40 owner_allowance=160
+deposit_rollback: tx=0xda320c547f603a4ddf531303b694cd615c54e8ec18abf31dcdf43c84bbb1123d status=0 block=12
+deposit_rollback_error: InsufficientShares(20,21)
+after_rollback: remaining=60 owner_assets=160 owner_shares=40 vault_assets=40 owner_allowance=160
+deposit_over_cap: tx=0xc74848cfa152fc3b9fa5e5a4de1a37494b2ab67c84739afa49b940c03aad284f status=0 block=13
+deposit_over_cap_error: BudgetExceeded(60,61)
+after_over_cap: remaining=60 owner_assets=160 owner_shares=40 vault_assets=40 owner_allowance=160
+native_revoke_budget: tx=0x04633c4b2c38613d0b837d48b3b5efaa54ece8b05431c1065a149435363d85a4 status=1 block=14
+deposit_after_revoke: tx=0xd15bb3c180dc64dae719376b4e869e4be091e556281e994257301337343e5428 status=0 block=15
+deposit_after_revoke_error: BudgetExceeded(0,1)
+after_revoked_deposit: remaining=0 owner_assets=160 owner_shares=40 vault_assets=40 owner_allowance=160
+PASS: TestTrustedExecutorRegression
+
+Trusted executor swap and rollback (separate local network run)
+chain_id: 99999
+vm_binary_sha256: 8b015978db793bb336dd6de3a2aeb43f5f61d894cf3e17b4ae370c85ea82a34e
+router: MockLFJRouter
+native_set_budget: tx=0xb26282b1515107b61e84a0297ffcb0953d043d7f5729afd82b03d7ef3f9f171a status=1 block=13 gas=62104
+after_set: remaining=100 owner_input=100 owner_output=0 router_input=0 router_output=100 owner_allowance=100
+swap_under_cap: tx=0xe2019c08750af22b416e6b1009974181e38d5294cc1ef2d78d62d49bcb14639a status=1 block=14 gas=337903
+after_swap: remaining=60 owner_input=60 owner_output=36 router_input=40 router_output=64 owner_allowance=60
+swap_rollback_error: SwapBlocked()
+swap_rollback: tx=0xadbc98b44698c3f84f7b94672fed1927ce2afafcef307cf31ccc71be399c959d status=0 block=16 gas=261730
+after_swap_rollback: remaining=60 owner_input=60 owner_output=36 router_input=40 router_output=64 owner_allowance=60
+PASS: TestTrustedExecutorSwap
