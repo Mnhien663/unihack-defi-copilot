@@ -135,7 +135,7 @@ func run() error {
 	}
 
 	client := &http.Client{
-		Timeout: 45 * time.Second,
+		Timeout: 70 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

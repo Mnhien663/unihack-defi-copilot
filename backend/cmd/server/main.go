@@ -25,7 +25,7 @@ import (
 const (
 	defaultAIProvider = "mock"
 	defaultDataMode   = "mock"
-	chatTimeout       = 30 * time.Second
+	chatTimeout       = 60 * time.Second
 )
 
 func main() {
@@ -362,7 +362,7 @@ func main() {
 		ErrorHandler: handlers.ErrorHandler,
 		BodyLimit:    32 * 1024, // 32 KiB
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 35 * time.Second,
+		WriteTimeout: 65 * time.Second,
 	})
 
 	app.Use(requestid.New())
