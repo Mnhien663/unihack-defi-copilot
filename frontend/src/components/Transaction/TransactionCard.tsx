@@ -1,15 +1,19 @@
 import './TransactionCard.css';
 
+export type SwapAsset = {
+  chain_id?: number;
+  address?: string;
+  symbol: string;
+  decimals?: number;
+};
+
 export type PendingAction = {
   pending_action_id?: string;
   arguments: {
     summary: {
-      token_in: {
-        symbol: string;
-      };
-      token_out: {
-        symbol: string;
-      };
+      token_in: SwapAsset;
+      token_out: SwapAsset;
+
       amount_in: {
         raw: string;
         formatted: string;
