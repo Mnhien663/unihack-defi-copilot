@@ -139,3 +139,42 @@ See `eval/eval_report.md` for captured responses and manual findings.
   Vietnamese and English runtime checks passed on 21 November 2026
   at 16:11 ICT. Liquidation calculations for funded borrowing positions
   remain unverified.
+## App-based verification on Avalanche Fuji
+
+Network: Avalanche Fuji C-Chain, chain ID 43113.
+
+### Swap E2E
+
+- Frontend: `32ed58e`.
+- Backend: `46f69b4`.
+- Completed Prepare, Confirm, Core Wallet signing and submission,
+  Submit Hash, and Refresh Receipt.
+- Swapped 0.01 LFJ USDT for 0.009999 LFJ USDC.
+- Block: `61429763`.
+- The app displayed Receipt Verified.
+
+### Deposit E2E
+
+- Frontend: `f1c4553`, including the Deposit fix `9f62624`.
+- Backend: `46f69b4`.
+- Completed Prepare, Confirm Review, Core Wallet signing and
+  submission, Submit Hash, and Refresh Receipt.
+- Deposited 0.1 DDEMO with a minimum of 0.099 dvDDEMO.
+- Received 0.1 dvDDEMO.
+- Block: `61428583`.
+- Backend verified the receipt.
+- Transaction:
+  `0xd026371430225e5f2da59e4b332b51b7dc40aa58bb0683738939052a46ce9b48`
+
+This app-based deposit is separate from the earlier test through
+core-check.html.
+
+### Subsequent UI checks
+
+On frontend `50aecee`, npm run build passed. Deposit Review displayed
+the DDEMO symbol, contract address, and 18 decimals. This check stopped
+at Review without submitting another transaction.
+
+Integrated frontend `37ef72d` includes the Asset Token display fix
+and Swap receipt-status display corrections. The E2E evidence above
+applies to the versions explicitly listed.
