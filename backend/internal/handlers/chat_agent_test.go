@@ -667,6 +667,7 @@ func TestPendingDecisionHandler(t *testing.T) {
 	}
 
 	action := &ai.PendingAction{
+		ToolName:             "prepare_swap",
 		PendingActionID:      actionID,
 		WalletAddress:        crypto.PubkeyToAddress(key.PublicKey).Hex(),
 		ChainID:              43113,
@@ -961,6 +962,7 @@ func TestPendingSwapReceiptHandlerSubmitHash(t *testing.T) {
 		ChainID:              43113,
 		NormalizedIntentHash: strings.Repeat("c", 64),
 		Arguments:            payload,
+		ToolName:             "prepare_swap",
 	}
 
 	for _, tc := range []struct {
@@ -1130,6 +1132,7 @@ func TestPendingSwapReceiptHandlerRefreshUsesStoredHash(t *testing.T) {
 		ChainID:              43113,
 		NormalizedIntentHash: strings.Repeat("c", 64),
 		Arguments:            payload,
+		ToolName:             "prepare_swap",
 	}
 
 	for _, tc := range []struct {

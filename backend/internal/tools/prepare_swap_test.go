@@ -223,6 +223,7 @@ func TestConfirmReviewedSwap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			action := &ai.PendingAction{
 				PendingActionID: "action-test",
+				ToolName:        PrepareSwapToolName,
 				Arguments:       json.RawMessage(tc.payload),
 			}
 			store := &confirmReviewTestStore{
@@ -351,7 +352,7 @@ func TestRecordReviewedSwapSubmission(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &swapSubmissionTestStore{
-				action:     &ai.PendingAction{Arguments: payload},
+				action:     &ai.PendingAction{Arguments: payload, ToolName: PrepareSwapToolName},
 				status:     tc.status,
 				storedHash: tc.storedHash,
 			}
@@ -488,7 +489,7 @@ func TestRefreshReviewedSwapReceipt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &swapReceiptRefreshTestStore{
 				swapSubmissionTestStore: swapSubmissionTestStore{
-					action:     &ai.PendingAction{Arguments: payload},
+					action:     &ai.PendingAction{Arguments: payload, ToolName: PrepareSwapToolName},
 					status:     "submitted",
 					storedHash: txHash,
 				},
@@ -531,6 +532,118 @@ func TestRefreshReviewedSwapReceipt(t *testing.T) {
 				}
 			} else if store.status != tc.wantStatus || store.finalizedHash != txHash {
 				t.Fatalf("persisted status=%q hash=%q", store.status, store.finalizedHash)
+			}
+		})
+	}
+}
+
+type depositReviewTestRevalidator func() (bool, error)
+
+func (f depositReviewTestRevalidator) RevalidateReviewedDeposit(
+	_ context.Context,
+	_ avalanche.UnsignedTx,
+	_ avalanche.DepositTxSummary,
+) (bool, error) {
+	return f()
+}
+
+func TestConfirmReviewedDeposit(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		enabled       bool
+		needsReview   bool
+		revalidateErr error
+		changed       bool
+		wantSuccess   bool
+		wantCalls     int
+		wantConfirm   int
+	}{
+		{
+			name: "disabled deposit cannot confirm",
+		},
+		{
+			name:        "changed preview requires fresh review",
+			enabled:     true,
+			needsReview: true,
+			wantCalls:   1,
+		},
+		{
+			name:          "revalidation timeout cannot confirm",
+			enabled:       true,
+			revalidateErr: context.DeadlineExceeded,
+			wantCalls:     1,
+		},
+		{
+			name:        "lost transition returns no action",
+			enabled:     true,
+			wantCalls:   1,
+			wantConfirm: 1,
+		},
+		{
+			name:        "successful deposit confirmation",
+			enabled:     true,
+			changed:     true,
+			wantSuccess: true,
+			wantCalls:   1,
+			wantConfirm: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			action := &ai.PendingAction{
+				PendingActionID: "deposit-test",
+				ToolName:        PrepareDepositToolName,
+				Arguments: json.RawMessage(
+					`{"transaction":{},"summary":{}}`,
+				),
+			}
+			store := &confirmReviewTestStore{
+				action:  action,
+				changed: tc.changed,
+			}
+
+			calls := 0
+			revalidator := ReviewedActionRevalidator{}
+			if tc.enabled {
+				revalidator.Deposit = depositReviewTestRevalidator(
+					func() (bool, error) {
+						calls++
+						if store.confirmCalls != 0 {
+							t.Fatal("confirmation ran before revalidation")
+						}
+						return tc.needsReview, tc.revalidateErr
+					},
+				)
+			}
+
+			got, err := ConfirmReviewedSwap(
+				context.Background(), store, revalidator,
+				action.PendingActionID, "session-test",
+				"0x0000000000000000000000000000000000000001",
+				43113, "review-hash-test",
+			)
+
+			if tc.wantSuccess {
+				if err != nil || got != action {
+					t.Fatalf("action=%v err=%v", got, err)
+				}
+			} else if err == nil || got != nil {
+				t.Fatalf("failed confirmation returned action=%v err=%v", got, err)
+			}
+
+			if tc.needsReview && !errors.Is(err, ErrSwapReviewRequired) {
+				t.Fatalf("expected fresh review, got %v", err)
+			}
+			if tc.revalidateErr != nil &&
+				!errors.Is(err, tc.revalidateErr) {
+				t.Fatalf("expected %v, got %v", tc.revalidateErr, err)
+			}
+			if calls != tc.wantCalls ||
+				store.confirmCalls != tc.wantConfirm {
+				t.Fatalf(
+					"revalidate/confirm=%d/%d, want %d/%d",
+					calls, store.confirmCalls,
+					tc.wantCalls, tc.wantConfirm,
+				)
 			}
 		})
 	}

@@ -192,6 +192,42 @@ type ReviewedSwapRevalidator interface {
 	) (bool, error)
 }
 
+type ReviewedDepositRevalidator interface {
+	RevalidateReviewedDeposit(
+		context.Context,
+		avalanche.UnsignedTx,
+		avalanche.DepositTxSummary,
+	) (bool, error)
+}
+
+type ReviewedActionRevalidator struct {
+	Swap    ReviewedSwapRevalidator
+	Deposit ReviewedDepositRevalidator
+}
+
+func (r ReviewedActionRevalidator) RevalidateReviewedSwap(
+	ctx context.Context,
+	tx avalanche.UnsignedTx,
+	summary avalanche.SwapTxSummary,
+	slippageBps uint16,
+) (bool, error) {
+	if r.Swap == nil {
+		return false, errors.New("swap revalidation is not enabled")
+	}
+	return r.Swap.RevalidateReviewedSwap(ctx, tx, summary, slippageBps)
+}
+
+func (r ReviewedActionRevalidator) RevalidateReviewedDeposit(
+	ctx context.Context,
+	tx avalanche.UnsignedTx,
+	summary avalanche.DepositTxSummary,
+) (bool, error) {
+	if r.Deposit == nil {
+		return false, errors.New("deposit revalidation is not enabled")
+	}
+	return r.Deposit.RevalidateReviewedDeposit(ctx, tx, summary)
+}
+
 var (
 	ErrPendingSwapNotConfirmable = errors.New("pending swap is not confirmable")
 	ErrSwapReviewRequired        = errors.New("prepare and review a fresh swap")
@@ -217,24 +253,53 @@ func ConfirmReviewedSwap(
 		return nil, ErrPendingSwapNotConfirmable
 	}
 
-	var payload struct {
-		Transaction avalanche.UnsignedTx    `json:"transaction"`
-		Summary     avalanche.SwapTxSummary `json:"summary"`
-		SlippageBps *uint16                 `json:"slippage_bps"`
-	}
-	if err := json.Unmarshal(action.Arguments, &payload); err != nil {
-		return nil, fmt.Errorf("decode stored swap review: %w", err)
-	}
-	if payload.SlippageBps == nil {
-		// Old actions must be prepared again. Zero bps is valid when present.
-		return nil, ErrSwapReviewRequired
+	var needsReview bool
+
+	switch action.ToolName {
+	case PrepareSwapToolName:
+		var payload struct {
+			Transaction avalanche.UnsignedTx    `json:"transaction"`
+			Summary     avalanche.SwapTxSummary `json:"summary"`
+			SlippageBps *uint16                 `json:"slippage_bps"`
+		}
+		if err := json.Unmarshal(action.Arguments, &payload); err != nil {
+			return nil, fmt.Errorf("decode stored swap review: %w", err)
+		}
+		if payload.SlippageBps == nil {
+			return nil, ErrSwapReviewRequired
+		}
+		if revalidator == nil {
+			return nil, errors.New("swap revalidation is not enabled")
+		}
+
+		needsReview, err = revalidator.RevalidateReviewedSwap(
+			ctx, payload.Transaction, payload.Summary, *payload.SlippageBps,
+		)
+
+	case PrepareDepositToolName:
+		depositRevalidator, ok := revalidator.(ReviewedDepositRevalidator)
+		if !ok {
+			return nil, errors.New("deposit revalidation is not enabled")
+		}
+
+		var payload struct {
+			Transaction avalanche.UnsignedTx       `json:"transaction"`
+			Summary     avalanche.DepositTxSummary `json:"summary"`
+		}
+		if err := json.Unmarshal(action.Arguments, &payload); err != nil {
+			return nil, fmt.Errorf("decode stored deposit review: %w", err)
+		}
+
+		needsReview, err = depositRevalidator.RevalidateReviewedDeposit(
+			ctx, payload.Transaction, payload.Summary,
+		)
+
+	default:
+		return nil, ErrPendingSwapNotConfirmable
 	}
 
-	needsReview, err := revalidator.RevalidateReviewedSwap(
-		ctx, payload.Transaction, payload.Summary, *payload.SlippageBps,
-	)
 	if err != nil {
-		return nil, fmt.Errorf("revalidate reviewed swap: %w", err)
+		return nil, fmt.Errorf("revalidate reviewed action: %w", err)
 	}
 	if needsReview {
 		return nil, ErrSwapReviewRequired
@@ -319,8 +384,8 @@ func RecordReviewedSwapSubmission(
 	if err != nil {
 		return "", fmt.Errorf("read submitted transaction: %w", err)
 	}
-	if err := avalanche.VerifyReviewedSwapTransaction(
-		transactionHash, payload.Transaction, observed,
+	if err := verifyReviewedActionTransaction(
+		action, transactionHash, observed,
 	); err != nil {
 		return "", fmt.Errorf("verify submitted transaction: %w", err)
 	}
@@ -405,8 +470,8 @@ func RefreshReviewedSwapReceipt(
 	if err != nil {
 		return "", fmt.Errorf("refresh swap receipt: %w", err)
 	}
-	if err := avalanche.VerifyReviewedSwapTransaction(
-		storedHash, payload.Transaction, observed,
+	if err := verifyReviewedActionTransaction(
+		action, storedHash, observed,
 	); err != nil {
 		return "", fmt.Errorf("verify swap receipt transaction: %w", err)
 	}
@@ -450,4 +515,204 @@ func RefreshReviewedSwapReceipt(
 	}
 
 	return "", ErrSwapSubmissionUnavailable
+}
+
+const PrepareDepositToolName = "prepare_vault_deposit"
+
+type DepositPreparationService interface {
+	PrepareDeposit(
+		context.Context,
+		string,
+		avalanche.PrepareDepositIntent,
+	) (avalanche.PrepareDepositResult, error)
+}
+
+func NewPrepareDepositCallback(
+	service DepositPreparationService,
+) (ai.SwapPreparationFunc, error) {
+	if service == nil {
+		return nil, errors.New("deposit preparation service is not configured")
+	}
+
+	return func(
+		ctx context.Context,
+		wallet string,
+		chainID uint64,
+		arguments json.RawMessage,
+	) (ai.SwapPreparation, error) {
+		var args struct {
+			AssetsRaw    string `json:"assets_raw"`
+			MinSharesRaw string `json:"min_shares_raw"`
+		}
+
+		if err := decodeStrictJSON(arguments, &args); err != nil {
+			return ai.SwapPreparation{}, fmt.Errorf(
+				"decode prepare_vault_deposit arguments: %w", err,
+			)
+		}
+		if args.AssetsRaw == "" || args.MinSharesRaw == "" {
+			return ai.SwapPreparation{}, errors.New(
+				"deposit requires assets_raw and min_shares_raw",
+			)
+		}
+
+		result, err := service.PrepareDeposit(
+			ctx,
+			wallet,
+			avalanche.PrepareDepositIntent{
+				WalletAddress: wallet,
+				ChainID:       chainID,
+				AssetsRaw:     args.AssetsRaw,
+				MinSharesRaw:  args.MinSharesRaw,
+			},
+		)
+		if err != nil {
+			return ai.SwapPreparation{}, err
+		}
+
+		prepared := ai.SwapPreparation{
+			Status:   result.Status,
+			Blockers: result.Blockers,
+		}
+
+		switch result.Status {
+		case "approval_required", "blocked", "reverted":
+			return prepared, nil
+
+		case "ready_for_review":
+			if result.Transaction == nil || len(result.Blockers) != 0 {
+				return ai.SwapPreparation{}, errors.New(
+					"inconsistent ready deposit",
+				)
+			}
+
+		default:
+			return ai.SwapPreparation{}, errors.New(
+				"unknown deposit preparation status",
+			)
+		}
+
+		built := result.Transaction
+		deadline := built.Summary.Deadline
+		if deadline == 0 || deadline > uint64(1<<63-1) {
+			return ai.SwapPreparation{}, errors.New(
+				"invalid prepared deposit deadline",
+			)
+		}
+
+		expiry := time.Unix(int64(deadline), 0).UTC()
+		if !expiry.After(time.Now()) ||
+			expiry.After(built.Summary.PreviewExpiresAt) {
+			return ai.SwapPreparation{}, errors.New(
+				"deposit deadline is expired or exceeds preview expiry",
+			)
+		}
+
+		payload, err := json.Marshal(struct {
+			Transaction avalanche.UnsignedTx       `json:"transaction"`
+			Summary     avalanche.DepositTxSummary `json:"summary"`
+		}{
+			Transaction: built.Prepared.Tx,
+			Summary:     built.Summary,
+		})
+		if err != nil {
+			return ai.SwapPreparation{}, fmt.Errorf(
+				"encode prepared deposit: %w", err,
+			)
+		}
+
+		prepared.Arguments = payload
+		prepared.ExpiresAt = expiry
+		return prepared, nil
+	}, nil
+}
+
+type PrepareDepositProposal struct{}
+
+func (PrepareDepositProposal) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
+		Name: PrepareDepositToolName,
+		Description: "Prepare an unsigned deposit into the configured Fuji " +
+			"DemoVault through AllowanceManager. The asset is DDEMO " +
+			"with 18 decimals. assets_raw and min_shares_raw are positive " +
+			"integers in smallest units. Share decimals are 18. " +
+			"Ask for missing amount or minimum shares. Never invent a " +
+			"minimum, sign, or submit a transaction. The backend fixes " +
+			"the vault, asset, owner, recipient and deadline.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"assets_raw": {
+					"type": "string",
+					"pattern": "^[0-9]{1,78}$",
+					"description": "Exact DDEMO deposit amount in raw units"
+				},
+				"min_shares_raw": {
+					"type": "string",
+					"pattern": "^[0-9]{1,78}$",
+					"description": "User-authorized minimum vault shares in raw units"
+				}
+			},
+			"required": ["assets_raw", "min_shares_raw"],
+			"additionalProperties": false
+		}`),
+	}
+}
+
+func (PrepareDepositProposal) Execute(
+	_ context.Context,
+	_ json.RawMessage,
+) (ai.ToolResult, error) {
+	return ai.ToolResult{}, errors.New(
+		"prepare_vault_deposit must use the agent confirmation path",
+	)
+}
+
+func verifyReviewedActionTransaction(
+	action *ai.PendingAction,
+	transactionHash string,
+	observed avalanche.ReceiptResult,
+) error {
+	if action == nil {
+		return errors.New("reviewed action is required")
+	}
+
+	switch action.ToolName {
+	case PrepareSwapToolName:
+		var payload struct {
+			Transaction avalanche.UnsignedTx `json:"transaction"`
+		}
+		if err := json.Unmarshal(action.Arguments, &payload); err != nil {
+			return fmt.Errorf("decode reviewed swap: %w", err)
+		}
+		return avalanche.VerifyReviewedSwapTransaction(
+			transactionHash, payload.Transaction, observed,
+		)
+
+	case PrepareDepositToolName:
+		var payload struct {
+			Transaction avalanche.UnsignedTx       `json:"transaction"`
+			Summary     avalanche.DepositTxSummary `json:"summary"`
+		}
+		if err := json.Unmarshal(action.Arguments, &payload); err != nil {
+			return fmt.Errorf("decode reviewed deposit: %w", err)
+		}
+
+		return avalanche.VerifyReviewedDepositTransaction(
+			transactionHash,
+			avalanche.ExpectedDepositIntent{
+				Tx:             payload.Transaction,
+				AdapterAddress: "0x78b5aADB9a8570C7B4387F29119201AF53008b7D",
+				VaultAddress:   payload.Summary.VaultAddress,
+				AssetAddress:   payload.Summary.Assets.Asset.Address,
+				AssetsRaw:      payload.Summary.Assets.Raw,
+				MinSharesRaw:   payload.Summary.MinShares.Raw,
+				Deadline:       payload.Summary.Deadline,
+			},
+			observed,
+		)
+
+	default:
+		return errors.New("unsupported reviewed action")
+	}
 }

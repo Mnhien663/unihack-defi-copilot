@@ -70,7 +70,10 @@ type AgentOutput struct {
 	RequiresConfirmation bool            `json:"requires_confirmation"`
 }
 
-const prepareSwapActionName = "prepare_swap"
+const (
+	prepareSwapActionName    = "prepare_swap"
+	prepareDepositActionName = "prepare_vault_deposit"
+)
 
 type SwapPreparation struct {
 	Status    string
@@ -87,11 +90,12 @@ type SwapPreparationFunc func(
 ) (SwapPreparation, error)
 
 type Agent struct {
-	llm         LLMClient
-	tools       ToolRegistry
-	memory      MemoryStore
-	policies    PolicyEngine
-	prepareSwap SwapPreparationFunc
+	llm            LLMClient
+	tools          ToolRegistry
+	memory         MemoryStore
+	policies       PolicyEngine
+	prepareSwap    SwapPreparationFunc
+	prepareDeposit SwapPreparationFunc
 }
 
 func pendingActionMessage(locale string) string {
@@ -156,6 +160,23 @@ func NewAgentWithSwapPreparation(
 	return agent, nil
 }
 
+func (a *Agent) ConfigureDepositPreparation(
+	prepare SwapPreparationFunc,
+) error {
+	if prepare == nil {
+		return fmt.Errorf("deposit preparation callback is required")
+	}
+	if _, ok := a.memory.(TurnRecorder); !ok {
+		return fmt.Errorf("deposit preparation requires a pending-action recorder")
+	}
+	if _, ok := a.memory.(PendingSwapLookup); !ok {
+		return fmt.Errorf("deposit preparation requires pending-action lookup")
+	}
+
+	a.prepareDeposit = prepare
+	return nil
+}
+
 func (a *Agent) persistTurn(
 	ctx context.Context,
 	record TurnRecord,
@@ -215,7 +236,8 @@ func (a *Agent) Run(
 
 	var swapFingerprint string
 
-	if input.IdempotencyKey != "" && a.prepareSwap != nil {
+	if input.IdempotencyKey != "" &&
+		(a.prepareSwap != nil || a.prepareDeposit != nil) {
 		var err error
 		swapFingerprint, err = swapRequestFingerprint(input)
 		if err != nil {
@@ -443,16 +465,26 @@ func (a *Agent) Run(
 			pendingArguments := call.Arguments
 			pendingExpiry := ""
 
-			if call.Name == prepareSwapActionName {
-				if a.prepareSwap == nil {
-					return AgentOutput{}, fmt.Errorf("swap preparation is not enabled")
+			isPreparedAction := call.Name == prepareSwapActionName ||
+				call.Name == prepareDepositActionName
+
+			if isPreparedAction {
+				prepare := a.prepareSwap
+				if call.Name == prepareDepositActionName {
+					prepare = a.prepareDeposit
+				}
+				if prepare == nil {
+					if call.Name == prepareSwapActionName {
+						return AgentOutput{}, fmt.Errorf("swap preparation is not enabled")
+					}
+					return AgentOutput{}, fmt.Errorf("deposit preparation is not enabled")
 				}
 
 				if swapFingerprint == "" {
 					return AgentOutput{}, ErrInvalidIdempotencyKey
 				}
 
-				prepared, err := a.prepareSwap(
+				prepared, err := prepare(
 					ctx, input.WalletAddress, input.ChainID, call.Arguments,
 				)
 				if err != nil {
@@ -514,7 +546,7 @@ func (a *Agent) Run(
 				RequiresConfirmation: true,
 			}
 
-			if call.Name == prepareSwapActionName {
+			if isPreparedAction {
 				pendingAction.IdempotencyKey = input.IdempotencyKey
 				pendingAction.RequestFingerprint = swapFingerprint
 			}
