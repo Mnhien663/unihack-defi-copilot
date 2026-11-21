@@ -1,5 +1,7 @@
 # defi-copilot-team1vn
 
+DeFi Copilot là trợ lý Việt–Anh cho Avalanche Fuji, giúp người dùng đọc số dư, lịch sử giao dịch và vị thế DeFi từ dữ liệu có nguồn. Với thao tác ghi, AI chỉ đề xuất giao dịch; backend kiểm tra điều kiện, tạo pending action và xác minh lại trước khi xác nhận. Người dùng ký bằng ví frontend, backend đối chiếu transaction và receipt trước khi ghi nhận mined.
+
 ## DEX quote trên Avalanche Fuji
 
 `get_swap_quote` đọc báo giá **exact-input**: đưa vào một lượng token xác định và nhận lượng đầu ra dự kiến. Tool gọi router **LFJ Liquidity Book V2.2** qua Avalanche RPC trên Fuji C-Chain (`43113`). Tool chỉ đọc dữ liệu; không approve, ký hoặc gửi giao dịch.
