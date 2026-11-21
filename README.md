@@ -97,6 +97,34 @@ Contract test của tool gồm 5 case offline: quote hai chiều, slippage bằn
   Transaction:
   `0x00286e361665632943d77c8c6250615ee374e48b622b8b5225651f02608d2f56`
 
+### App-based verification on Avalanche Fuji C-Chain
+
+The following tests ran through DeFi Copilot and Core Wallet on
+Avalanche Fuji C-Chain (chain ID 43113).
+
+| Flow | Frontend | Backend | Result |
+|---|---|---|---|
+| Swap E2E | `32ed58e` | `46f69b4` | Swapped 0.01 LFJ USDT for 0.009999 LFJ USDC at block `61429763`. The app displayed Receipt Verified. |
+| Deposit E2E | `f1c4553` | `46f69b4` | Deposited 0.1 DDEMO and received 0.1 dvDDEMO at block `61428583`, with a backend-verified receipt. |
+
+Both flows covered preparation, review confirmation, wallet signing
+and submission, transaction-hash recording, and receipt refresh.
+
+Deposit transaction:
+`0xd026371430225e5f2da59e4b332b51b7dc40aa58bb0683738939052a46ce9b48`
+
+These app-based tests are separate from the earlier deposit through
+`core-check.html`.
+
+On frontend `50aecee`, `npm run build` passed and Deposit Review
+displayed the DDEMO symbol, contract address, and 18 decimals.
+That check stopped at Review and did not submit another transaction.
+
+The integrated frontend includes the Asset Token display correction
+and the Swap receipt-status display fix. The E2E results above apply
+to the exact versions listed, rather than constituting a new E2E
+test of every subsequent UI change.
+
 ### Evaluation
 
 The latest reviewed bilingual run contains 30 cases:
