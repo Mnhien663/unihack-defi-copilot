@@ -1,62 +1,389 @@
 
-/* css grid for spliting main area and side bar*/
+/* =========================================
+   GLOBAL BOX MODEL
+   ========================================= */
+
 * {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
+  font-family: var(--font-ui, Arial, sans-serif);
+  font-size: 16px;
+  line-height: 1.5;
 }
+
+/* =========================================
+   MAIN APPLICATION LAYOUT
+   ========================================= */
 
 .app-layout {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  min-height: 100vh;
+  grid-template-columns: 280px minmax(0, 1fr);
+
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+
+  overflow: hidden;
 }
 
+/* =========================================
+   SIDEBAR
+   ========================================= */
+
+/* Preserve existing sidebar styling */
 .sidebar {
   background-color: #172338;
   color: white;
   padding: 24px;
 }
 
-/*flexbox splits main area into small part includes footer, header,..*/
-/* Main Area */
+/* Actual Sidebar component */
+.app-layout > .dc-sidebar {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* =========================================
+   MAIN AREA
+   ========================================= */
+
 .main-area {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+
+  width: 100%;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+
+  overflow: hidden;
 }
 
-/* Header */
+/* =========================================
+   HEADER
+   ========================================= */
+
+/* Preserve existing header styling */
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 30px;
+  gap: 16px;
+
+  padding: 14px 24px;
   background-color: #f1f5f9;
 }
 
-/* Main Content */
-.content {
-  flex: 1;
-  padding: 30px;
+/* Actual Header component */
+.main-area > .dc-header {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
-/* Footer */
+.main-area .dc-header-title {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.main-area .dc-header-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* Prevent wallet information from overflowing */
+.main-area .dc-wallet-status {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* =========================================
+   MAIN CONTENT
+   ========================================= */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+
+  padding: 16px 24px;
+
+  overflow: hidden;
+}
+
+/* =========================================
+   CHATBOT LAYOUT
+   ========================================= */
+
+.content > .chatbot {
+  display: grid;
+
+  grid-template-columns:
+    max-content
+    max-content
+    minmax(0, 1fr);
+
+  grid-template-rows:
+    auto
+    auto
+    minmax(0, 1fr)
+    auto
+    auto
+    auto;
+
+  column-gap: 10px;
+  row-gap: 6px;
+
+  flex: 1 1 auto;
+
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+
+  margin: 0;
+  overflow: hidden;
+}
+
+/* =========================================
+   WELCOME BANNER
+   ========================================= */
+
+.content .dc-chat-welcome {
+  grid-column: 1 / -1;
+  grid-row: 1;
+
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+
+  gap: 10px;
+  margin: 0;
+}
+
+.content .dc-welcome-card {
+  padding: 14px 18px;
+}
+
+/* =========================================
+   QUICK ACTIONS
+   ========================================= */
+
+.content .dc-suggestions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.content .dc-suggestion-button {
+  min-width: 0;
+  min-height: 50px;
+  padding: 10px 12px;
+}
+
+/* =========================================
+   DEVELOPMENT / MOCK BUTTONS
+   ========================================= */
+
+.content .chatbot > button {
+  grid-row: 2;
+
+  width: max-content;
+  max-width: 100%;
+  min-height: 36px;
+
+  margin: 0;
+  padding: 8px 14px;
+}
+
+.content .chatbot > button:nth-of-type(1) {
+  grid-column: 1;
+}
+
+.content .chatbot > button:nth-of-type(2) {
+  grid-column: 2;
+}
+
+/* =========================================
+   CHAT MESSAGE HISTORY
+   ========================================= */
+
+.content .chat-messages {
+  grid-column: 1 / -1;
+  grid-row: 3;
+
+  display: flex;
+  flex-direction: column;
+
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+
+  gap: 10px;
+  padding: 14px 16px;
+
+  overflow-x: hidden;
+  overflow-y: auto;
+
+  overscroll-behavior: contain;
+}
+
+/* Keep messages and cards at their natural height */
+.content .chat-messages > * {
+  flex-shrink: 0;
+}
+
+/* Chat bubbles remain inside the message area */
+.content .chat-bubble {
+  max-width: 75%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Portfolio and transaction cards, if rendered */
+.content .chat-messages > .dc-portfolio-card,
+.content .chat-messages > .transaction-review {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* =========================================
+   PENDING SWAP RECOVERY
+   ========================================= */
+
+.content .pending-swap-recovery {
+  grid-column: 1 / -1;
+  grid-row: 4;
+
+  min-width: 0;
+  max-height: 28dvh;
+
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* =========================================
+   CHAT API ERROR
+   ========================================= */
+
+.content .chat-api-error {
+  grid-column: 1 / -1;
+  grid-row: 5;
+
+  min-width: 0;
+  margin: 0;
+
+  overflow-wrap: anywhere;
+}
+
+/* =========================================
+   CHAT COMPOSER
+   ========================================= */
+
+.content .dc-chat-composer {
+  grid-column: 1 / -1;
+  grid-row: 6;
+
+  min-width: 0;
+  margin: 0;
+
+  padding: 6px 0 14px;
+}
+
+.content .chat-input-row {
+  display: flex;
+  align-items: stretch;
+
+  width: 100%;
+  min-width: 0;
+  gap: 10px;
+}
+
+.content .chat-input-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.content .chat-input-row button {
+  flex: 0 0 auto;
+}
+
+/* =========================================
+   FOOTER
+   ========================================= */
+
+/* Preserve existing footer styling */
 .footer {
   padding: 15px;
   text-align: center;
   background-color: #f1f5f9;
 }
 
+/* =========================================
+   EXISTING HEADING HIERARCHY
+   ========================================= */
 
-/* Responsive for mobile devices */
+.app-layout h2 {
+  font-size: 22px;
+}
+
+.app-layout h3 {
+  font-size: 18px;
+}
+
+/* =========================================
+   SMALLER DESKTOP / TABLET
+   ========================================= */
+
+@media (max-width: 1100px) {
+  .app-layout {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+
+  .main-area > .dc-header {
+    flex-wrap: wrap;
+  }
+
+  .main-area .dc-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .content .dc-suggestions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* =========================================
+   MOBILE
+   ========================================= */
+
 @media (max-width: 768px) {
   .app-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
   }
 
   .sidebar {
@@ -73,8 +400,14 @@ body {
     margin: 0;
   }
 
+  .app-layout > .dc-sidebar {
+    height: auto;
+    overflow: visible;
+  }
+
   .main-area {
-    min-height: 0;
+    height: 100dvh;
+    min-height: 550px;
   }
 
   .header {
@@ -84,6 +417,86 @@ body {
   }
 
   .content {
-    padding: 20px 16px;
+    padding: 12px 16px;
   }
+
+  .content > .chatbot {
+    grid-template-columns: minmax(0, 1fr);
+
+    grid-template-rows:
+      auto
+      auto
+      auto
+      minmax(0, 1fr)
+      auto
+      auto
+      auto;
+  }
+
+  .content .dc-chat-welcome {
+    grid-row: 1;
+  }
+
+  .content .chatbot > button:nth-of-type(1) {
+    grid-row: 2;
+    grid-column: 1;
+  }
+
+  .content .chatbot > button:nth-of-type(2) {
+    grid-row: 3;
+    grid-column: 1;
+  }
+
+  .content .chat-messages {
+    grid-row: 4;
+  }
+
+  .content .pending-swap-recovery {
+    grid-row: 5;
+  }
+
+  .content .chat-api-error {
+    grid-row: 6;
+  }
+
+  .content .dc-chat-composer {
+    grid-row: 7;
+  }
+}
+
+@media (max-width: 600px) {
+  .content .dc-suggestions {
+    grid-template-columns: 1fr;
+  }
+
+  .content .dc-welcome-card {
+    padding: 12px 16px;
+  }
+
+  .content .chat-bubble {
+    max-width: 90%;
+  }
+}
+
+
+/* Preserve Chatbot state between page switches */
+.chat-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-page[hidden] {
+  display: none;
+}
+
+/* Dashboard pages */
+.dashboard-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }

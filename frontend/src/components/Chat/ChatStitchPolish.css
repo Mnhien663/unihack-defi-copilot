@@ -1,0 +1,159 @@
+/* Avalanche DeFi Copilot — Stitch-inspired light signature gradient
+   UI-only. No chat, wallet, API, or confirmation behavior is changed. */
+
+/* Compact welcome region so the conversation keeps most of the height. */
+.chatbot .dc-chat-welcome {
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* White welcome panel with one subtle gradient frame and pastel aura. */
+.chatbot .dc-welcome-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 88px;
+  padding: 12px 18px;
+  border: 1.5px solid transparent;
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    linear-gradient(115deg, #e9a0a5, #b5a6e8 56%, #aacdea) border-box;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+}
+
+.chatbot .dc-welcome-card::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  background:
+    radial-gradient(ellipse at 95% 8%, rgba(160, 198, 255, 0.32), transparent 57%),
+    radial-gradient(ellipse at 73% 120%, rgba(199, 172, 251, 0.29), transparent 55%),
+    radial-gradient(ellipse at 103% 100%, rgba(255, 185, 193, 0.23), transparent 43%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.chatbot .dc-welcome-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.chatbot .dc-welcome-card h2 {
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.chatbot .dc-welcome-card p {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* Four existing quick actions: consistent sizing, gradient only on hover. */
+.chatbot .dc-suggestions {
+  gap: 10px;
+}
+
+.chatbot .dc-suggestion-button {
+  min-height: 60px;
+  padding: 12px 14px;
+  border: 1px solid #e2e5ed;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.025);
+}
+
+.chatbot .dc-suggestion-button:hover {
+  border-color: transparent;
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    linear-gradient(115deg, #e88f96, #a795e9 55%, #93c6e8) border-box;
+  box-shadow: 0 3px 14px rgba(80, 83, 140, 0.09);
+}
+
+.chatbot .dc-suggestion-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Preserve the existing independently scrollable message history. */
+.chatbot .chat-messages {
+  padding: 14px;
+}
+
+.chatbot .chat-bubble {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.chatbot .chat-bubble.assistant {
+  background: #ffffff;
+  color: var(--color-text);
+  border: 1px solid #e7eaf2;
+  box-shadow: 0 2px 9px rgba(15, 23, 42, 0.035);
+}
+
+/* The composer remains at the bottom of the existing flex layout. */
+.chatbot .dc-chat-composer {
+  padding: 8px 0 0;
+  background: var(--color-page);
+}
+
+.chatbot .chat-input-row {
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1.5px solid transparent;
+  border-radius: 16px;
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    linear-gradient(115deg, #e6a4ab, #c4b2f2 54%, #b1d4ee) border-box;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.07);
+}
+
+.chatbot .chat-input-row:focus-within {
+  box-shadow: 0 0 0 3px rgba(217, 54, 57, 0.10),
+              0 5px 18px rgba(15, 23, 42, 0.07);
+}
+
+.chatbot .chat-input-row input {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.chatbot .chat-input-row input:focus {
+  outline: none;
+}
+
+.chatbot .chat-input-row button {
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 10px;
+  background: var(--color-accent);
+}
+
+.chatbot .chat-input-row button:hover:not(:disabled) {
+  background: #bb2f34;
+}
+
+.chatbot .chat-input-row button:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+@media (max-width: 800px) {
+  .chatbot .dc-welcome-card {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .chatbot .dc-welcome-card h2 {
+    font-size: 18px;
+  }
+
+  .chatbot .dc-suggestion-button {
+    min-height: 54px;
+  }
+}

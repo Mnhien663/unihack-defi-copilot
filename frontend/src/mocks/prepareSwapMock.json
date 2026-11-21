@@ -1,0 +1,54 @@
+
+{
+  "pending_action": {
+    "pending_action_id": "00000000-0000-4000-8000-000000000001",
+    "request_id": "mock-request-001",
+    "tool_call_id": "mock-tool-call-001",
+    "tool_name": "prepare_swap",
+    "arguments": {
+      "summary": {
+        "owner_address": "0x0000000000000000000000000000000000000001",
+        "recipient_address": "0x0000000000000000000000000000000000000001",
+        "manager_address": "0x0000000000000000000000000000000000000002",
+        "token_in": {
+          "chain_id": 43113,
+          "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+          "symbol": "USDT",
+          "decimals": 6
+        },
+        "token_out": {
+          "chain_id": 43113,
+          "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+          "symbol": "USDC",
+          "decimals": 6
+        },
+        "amount_in": {
+          "asset": {
+            "chain_id": 43113,
+            "address": "0xAb231A5744C8E6c45481754928cCfFFFD4aa0732",
+            "symbol": "USDT",
+            "decimals": 6
+          },
+          "raw": "1000000",
+          "formatted": "1"
+        },
+        "min_amount_out": {
+          "asset": {
+            "chain_id": 43113,
+            "address": "0xB6076C93701D6a07266c31066B298AeC6dd65c2d",
+            "symbol": "USDC",
+            "decimals": 6
+          },
+          "raw": "994900",
+          "formatted": "0.9949"
+        },
+        "deadline": 1795132800,
+        "quote_expires_at": "2026-11-20T00:00:00Z"
+      }
+    },
+    "chain_id": 43113,
+    "wallet_address": "0x0000000000000000000000000000000000000001",
+    "expires_at": "2026-11-20T00:00:00Z",
+    "requires_confirmation": true
+  }
+}
