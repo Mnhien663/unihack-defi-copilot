@@ -1,0 +1,184 @@
+
+.dc-header {
+  min-height: 64px;
+  padding: 12px 24px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  background: var(--color-card);
+  border-bottom: 1px solid #e2e5ed;
+}
+
+.dc-header-title h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.dc-header-title p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.dc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dc-network-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 12px;
+  border-radius: 999px;
+
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dc-network-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+
+/* Wallet container */
+.dc-wallet-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+
+  max-width: 100%;
+  min-width: 0;
+  padding: 8px 12px;
+
+  border: 1px solid #e2e5ed;
+  border-radius: 12px;
+
+  background: #f4f6fc;
+  color: #172338;
+
+  font-family: var(--font-ui, inherit);
+  font-size: 14px;
+}
+
+/* Wallet address */
+.dc-wallet-status > span:first-child {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Provider and chain information */
+.dc-wallet-status small {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+/* Network status */
+.dc-wallet-status > span:nth-of-type(2) {
+  font-size: 13px;
+  font-weight: 600;
+  color: #15803d;
+  white-space: nowrap;
+}
+
+/* Connect, Disconnect, Switch buttons */
+.dc-wallet-status button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 36px;
+  padding: 8px 14px;
+
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+
+  background: #ffffff;
+  color: #172338;
+
+  font-family: var(--font-ui, inherit);
+  font-size: 13px;
+  font-weight: 600;
+
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.dc-wallet-status button:hover:not(:disabled) {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+.dc-wallet-status button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.dc-wallet-status button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dc-wallet-status p[role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+/* Prevent Header elements from overlapping */
+.dc-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Smaller desktop screens */
+@media (max-width: 1200px) {
+  .dc-header {
+    flex-wrap: wrap;
+  }
+
+  .dc-header-actions {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-wallet-status button {
+    transition: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .dc-header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+
+  .dc-header-actions {
+    flex-wrap: wrap;
+  }
+}
