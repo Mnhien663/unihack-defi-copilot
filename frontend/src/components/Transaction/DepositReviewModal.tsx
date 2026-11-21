@@ -327,10 +327,24 @@ export default function DepositReviewModal({
   }
 
   if (!isOpen) return null;
+  const assetToken =
+    isRecord(summary.assets) && isRecord(summary.assets.asset)
+      ? summary.assets.asset
+      : {};
   const rows: [string, string][] = [
     ['Vault (DemoVault)', readString(summary, 'vault_address') ?? 'Thiếu'],
     ['Assets', amount(summary, 'assets')],
-    ['Asset token', isRecord(summary.assets) && isRecord(summary.assets.asset) ? String(summary.assets.asset.symbol ?? summary.assets.asset.address ?? 'Thiếu') : 'Thiếu'],
+
+    ['Asset token', readString(assetToken, 'symbol') ?? 'Thiếu'],
+
+    ['Asset address', readString(assetToken, 'address') ?? 'Thiếu'],
+
+    ['Asset decimals',
+      typeof assetToken.decimals === 'number' &&
+      Number.isInteger(assetToken.decimals)
+        ? String(assetToken.decimals)
+        : 'Thiếu'],
+
     ['Preview shares', amount(summary, 'preview_shares')],
     ['Minimum shares', amount(summary, 'min_shares')],
     ['Execution Manager', readString(summary, 'manager_address') ?? 'Thiếu'],
