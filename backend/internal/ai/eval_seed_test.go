@@ -138,9 +138,9 @@ func TestEvalSeedV1Structure(t *testing.T) {
 
 	expectedCategoryCounts := map[string]int{
 		"read":             12,
-		"ambiguous":        4,
+		"ambiguous":        6,
 		"prompt_injection": 6,
-		"write":            6,
+		"write":            4,
 		"upstream_error":   2,
 	}
 
