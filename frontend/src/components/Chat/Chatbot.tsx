@@ -422,9 +422,6 @@ function Chatbot() {
     }
   }
 
-  const walletReady = isConnected && Boolean(address) && chainId === 43113;
-  const canSend = walletReady && Boolean(draft.trim()) && !isLoading;
-
   return (
     <section className="chatbot">
       <ChatWelcome onSelect={setDraft} />
@@ -602,10 +599,12 @@ function Chatbot() {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              if (canSend) void handleSend();
-            }
+              if (
+                  event.key === 'Enter' &&
+                  !event.nativeEvent.isComposing
+              ) {
+                  handleSend();
+              }
           }}
           placeholder="Nhập câu hỏi về Avalanche..."
       />
@@ -613,20 +612,11 @@ function Chatbot() {
       <button
           type="button"
           onClick={handleSend}
-          disabled={!canSend}
+          disabled={!draft.trim()}
       >
           Send
       </button>
       </div>
-      {!isConnected || !address ? (
-        <p role="status" className="chat-api-error">
-          Please connect Core Wallet before sending a message.
-        </p>
-      ) : chainId !== 43113 ? (
-        <p role="status" className="chat-api-error">
-          Please switch to Avalanche Fuji before sending a message.
-        </p>
-      ) : null}
     </div>
 
     {pendingAction && isDepositPendingAction(pendingAction) ? ( 
