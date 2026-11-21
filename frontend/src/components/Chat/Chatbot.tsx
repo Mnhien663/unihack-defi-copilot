@@ -17,6 +17,8 @@ import DepositReviewModal, {
 import { useConnection } from 'wagmi';
 
 import { loadPendingSwap } from '../../utils/pendingSwapStorage';
+import DepositRecoveryPanel from '../Transaction/DepositRecoveryPanel';
+import { hasStoredPendingDeposit, loadPendingDeposit, type StoredPendingDeposit } from '../../utils/pendingDepositStorage';
 
 import { useSwapReceiptSigning } from '../../hooks/useSwapReceiptSigning';
 
@@ -60,6 +62,18 @@ function Chatbot() {
 
     return newSessionId;
   });
+
+  const [recoveredDeposit, setRecoveredDeposit] = useState<StoredPendingDeposit | null>(() => {
+    try { return loadPendingDeposit(); } catch { return null; }
+  });
+
+  useEffect(() => {
+    function handleDepositBroadcast() {
+      try { setRecoveredDeposit(loadPendingDeposit()); } catch { setRecoveredDeposit(null); }
+    }
+    window.addEventListener('deficopilot:deposit-broadcast', handleDepositBroadcast);
+    return () => window.removeEventListener('deficopilot:deposit-broadcast', handleDepositBroadcast);
+  }, []);
 
   const [recoveredSwap] = useState(() => {
     try {
@@ -105,6 +119,12 @@ function Chatbot() {
     // Never reset the session while a chat request or receipt recovery is running.
     if (isLoading || isSigning || isRecoveringHash || isRecoveringReceipt) {
       setApiError('Please finish the current request or receipt recovery first.');
+      return;
+    }
+
+    // Don't hide an unresolved transaction hash by starting another session.
+    if (hasStoredPendingDeposit()) {
+      setApiError('Previous Deposit needs Submit Hash / Refresh Receipt. Finish receipt recovery first.');
       return;
     }
 
@@ -404,24 +424,6 @@ function Chatbot() {
 
   return (
     <section className="chatbot">
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <button
-          type="button"
-          onClick={handleNewConversation}
-          disabled={isLoading || isSigning || isRecoveringHash || isRecoveringReceipt}
-          aria-label="Start a new conversation"
-          style={{
-            padding: '8px 14px',
-            borderRadius: 10,
-            border: '1px solid #cbd5e1',
-            background: '#fff',
-            color: '#192238',
-            cursor: isLoading ? 'not-allowed' : 'pointer',
-          }}
-        >
-          + New Conversation
-        </button>
-      </div>
       <ChatWelcome onSelect={setDraft} />
 
       {import.meta.env.DEV && (
@@ -468,6 +470,8 @@ function Chatbot() {
           </div>
         ))}
       </div>
+
+      {recoveredDeposit && <DepositRecoveryPanel key={recoveredDeposit.transactionHash} deposit={recoveredDeposit} />}
 
       {recoveredSwap &&
         recoveredSwap.sessionId === sessionId && (
