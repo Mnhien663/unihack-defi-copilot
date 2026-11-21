@@ -12,8 +12,8 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  min-height: 108px;
-  padding: 18px 22px;
+  min-height: 88px;
+  padding: 12px 18px;
   border: 1.5px solid transparent;
   background:
     linear-gradient(#ffffff, #ffffff) padding-box,
