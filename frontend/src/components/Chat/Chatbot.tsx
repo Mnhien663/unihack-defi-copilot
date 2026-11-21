@@ -9,6 +9,10 @@ import { sendChatMessage } from '../../services/chatApi';
 import TransactionCard, { type PendingAction } from '../Transaction/TransactionCard';
 import prepareSwapMock from '../../mocks/prepareSwapMock.json';
 import ConfirmationModal from '../Transaction/ConfirmationModal';
+import DepositReviewModal, {
+  isDepositPendingAction,
+  type DepositPendingAction,
+} from '../Transaction/DepositReviewModal';
 
 import { useConnection } from 'wagmi';
 
@@ -31,7 +35,7 @@ function Chatbot() {
   const { address, isConnected, chainId } = useConnection();
 
   const [pendingAction, setPendingAction] =
-  useState<PendingAction | null>(null);
+  useState<PendingAction | DepositPendingAction | null>(null);
   const [isMockAction, setIsMockAction] = useState(false);
 
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
@@ -187,30 +191,34 @@ function Chatbot() {
           return;
         }
 
-        const nextAction = candidate as PendingAction;
-        const summary = nextAction.arguments?.summary;
+        const nextAction = candidate as PendingAction | DepositPendingAction;
+        const isDeposit = isDepositPendingAction(candidate);
 
-        // Chỉ hiển thị modal nếu payload đủ dữ liệu review
-        const isValidAction =
+        const commonActionChecks =
           Boolean(nextAction.pending_action_id) &&
-          /^[0-9a-f]{64}$/.test(
-            nextAction.normalized_intent_hash ?? ''
-          ) &&
+          /^[0-9a-f]{64}$/.test(nextAction.normalized_intent_hash ?? '') &&
           nextAction.chain_id === 43113 &&
-          nextAction.wallet_address?.toLowerCase() ===
-            address.toLowerCase() &&
-          Boolean(
-            nextAction.expires_at &&
-            Date.parse(nextAction.expires_at) > Date.now()
-          ) &&
-          Boolean(
-            summary?.token_in?.symbol &&
-            summary?.token_out?.symbol &&
-            summary?.amount_in?.raw &&
-            summary?.min_amount_out?.raw &&
-            summary?.recipient_address &&
-            Number.isSafeInteger(summary?.deadline)
-          );
+          nextAction.wallet_address?.toLowerCase() === address.toLowerCase() &&
+          Boolean(nextAction.expires_at && Date.parse(nextAction.expires_at) > Date.now());
+
+        // Deposit review only: do not misclassify it as a Swap.
+        // Deposit signing remains disabled until the backend review/calldata
+        // schema is verified. The existing Swap validation remains unchanged.
+        const isValidAction = isDeposit
+          ? commonActionChecks &&
+            Boolean(nextAction.arguments?.summary &&
+              typeof nextAction.arguments.summary === 'object')
+          : commonActionChecks && (() => {
+              const summary = (nextAction as PendingAction).arguments?.summary;
+              return Boolean(
+                summary?.token_in?.symbol &&
+                summary?.token_out?.symbol &&
+                summary?.amount_in?.raw &&
+                summary?.min_amount_out?.raw &&
+                summary?.recipient_address &&
+                Number.isSafeInteger(summary?.deadline)
+              );
+            })();
 
         if (!isValidAction) {
           setPendingAction(null);
@@ -541,16 +549,23 @@ function Chatbot() {
       </div>
     </div>
 
-    <ConfirmationModal
-      isOpen={
-        isConfirmationOpen &&
-        pendingAction !== null
-      }
+    {pendingAction && isDepositPendingAction(pendingAction) ? ( 
+    <DepositReviewModal
+      isOpen={isConfirmationOpen}
       pendingAction={pendingAction}
       sessionId={sessionId}
-      isMock={isMockAction}
       onClose={() => setIsConfirmationOpen(false)}
     />
+
+    ) : (
+      <ConfirmationModal
+        isOpen={isConfirmationOpen && pendingAction !== null}
+        pendingAction={pendingAction}
+        sessionId={sessionId}
+        isMock={isMockAction}
+        onClose={() => setIsConfirmationOpen(false)}
+      />
+    )}
 
     </section>
   );
