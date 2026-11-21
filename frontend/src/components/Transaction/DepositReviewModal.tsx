@@ -15,6 +15,7 @@ import {
   updatePendingDepositReceipt,
 } from '../../utils/pendingDepositStorage';
 import { hasStoredPendingSwap } from '../../utils/pendingSwapStorage';
+import { canonicalDepositJson } from '../../utils/canonicalDepositJson';
 import './DepositReviewModal.css';
 
 const FUJI_CHAIN_ID = 43113;
@@ -180,7 +181,7 @@ export default function DepositReviewModal({
     approvedScope.sessionId === sessionId &&
     address && approvedScope.wallet.toLowerCase() === address.toLowerCase() &&
     chainId === FUJI_CHAIN_ID &&
-    JSON.stringify(summary) === approvedScope.summarySnapshot,
+    canonicalDepositJson(summary) === approvedScope.summarySnapshot,
   );
   const isProcessing = busy || sendTransaction.isPending || hashBusy || receiptBusy ||
     signMessage.isPending || isSigning;
@@ -219,7 +220,7 @@ export default function DepositReviewModal({
           sessionId,
           wallet: address,
           expiresAtMs: Date.parse(result.expires_at),
-          summarySnapshot: JSON.stringify(summary),
+          summarySnapshot: canonicalDepositJson(summary),
         });
       }
     } catch (error) {
