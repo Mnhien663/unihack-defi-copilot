@@ -66,7 +66,10 @@ func (s *PostgresMemoryStore) LookupPendingSwap(
 	if storedFingerprint != fingerprint {
 		return nil, ai.ErrSwapIdempotencyConflict
 	}
-	if action.ToolName != "prepare_swap" || status != "pending" || !unexpired {
+	supportedAction := action.ToolName == "prepare_swap" ||
+		action.ToolName == "prepare_vault_deposit"
+
+	if !supportedAction || status != "pending" || !unexpired {
 		return nil, ai.ErrSwapPendingUnavailable
 	}
 
@@ -133,7 +136,7 @@ func (s *PostgresMemoryStore) transitionPendingSwap(
 		  AND lower(wallet_address) = lower($3)
 		  AND chain_id = $4
 		  AND normalized_intent_hash = $5
-		  AND tool_name = 'prepare_swap'
+		  AND tool_name IN ('prepare_swap', 'prepare_vault_deposit')
 		  AND status = 'pending'
 		  AND expires_at > clock_timestamp()
 		RETURNING pending_action_id
@@ -175,7 +178,7 @@ func (s *PostgresMemoryStore) LoadPendingSwapForReview(
 		  AND lower(wallet_address) = lower($3)
 		  AND chain_id = $4
 		  AND normalized_intent_hash = $5
-		  AND tool_name = 'prepare_swap'
+		  AND tool_name IN ('prepare_swap', 'prepare_vault_deposit')
 		  AND status = 'pending'
 		  AND expires_at > clock_timestamp()
 	`, actionID, sessionID, authenticatedWallet, chainID, reviewedIntentHash).Scan(
@@ -226,7 +229,7 @@ func (s *PostgresMemoryStore) LookupPendingSwapOwner(
 		  AND session_id = $2
 		  AND chain_id = $3
 		  AND normalized_intent_hash = $4
-		  AND tool_name = 'prepare_swap'
+		  AND tool_name IN ('prepare_swap', 'prepare_vault_deposit')
 		  AND status = 'pending'
 		  AND expires_at > clock_timestamp()
 	`, actionID, sessionID, chainID, reviewedIntentHash).Scan(&wallet)
@@ -272,7 +275,7 @@ func (s *PostgresMemoryStore) AttachVerifiedPendingSwapHash(
 		  AND lower(wallet_address) = lower($3)
 		  AND chain_id = $4
 		  AND normalized_intent_hash = $5
-		  AND tool_name = 'prepare_swap'
+		  AND tool_name IN ('prepare_swap', 'prepare_vault_deposit')
 		  AND status = 'confirmed'
 		  AND transaction_hash IS NULL
 		RETURNING pending_action_id
@@ -316,7 +319,7 @@ func (s *PostgresMemoryStore) LoadConfirmedSwapForReceipt(
 		  AND lower(wallet_address) = lower($3)
 		  AND chain_id = $4
 		  AND normalized_intent_hash = $5
-		  AND tool_name = 'prepare_swap'
+		  AND tool_name IN ('prepare_swap', 'prepare_vault_deposit')
 		  AND status IN ('confirmed', 'submitted', 'mined', 'failed')
 	`, actionID, sessionID, authenticatedWallet, chainID, reviewedIntentHash).Scan(
 		&stored.PendingActionID,
@@ -370,7 +373,7 @@ func (s *PostgresMemoryStore) FinalizeVerifiedPendingSwapReceipt(
 		  AND lower(wallet_address) = lower($3)
 		  AND chain_id = $4
 		  AND normalized_intent_hash = $5
-		  AND tool_name = 'prepare_swap'
+		  AND tool_name IN ('prepare_swap', 'prepare_vault_deposit')
 		  AND status = 'submitted'
 		  AND lower(transaction_hash) = lower($6)
 		RETURNING pending_action_id

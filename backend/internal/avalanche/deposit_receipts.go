@@ -394,3 +394,28 @@ func (r *RPCReceiptReader) VerifyDepositTx(
 		return result, errors.New("unexpected deposit transaction status")
 	}
 }
+
+func VerifyReviewedDepositTransaction(
+	requestedHash string,
+	intent ExpectedDepositIntent,
+	observed ReceiptResult,
+) error {
+	if err := VerifyReviewedSwapTransaction(
+		requestedHash, intent.Tx, observed,
+	); err != nil {
+		return err
+	}
+	if err := matchDepositTransaction(intent, observed); err != nil {
+		return err
+	}
+
+	switch observed.Status {
+	case TransactionStatusPending, TransactionStatusFailed:
+		return nil
+	case TransactionStatusSucceeded:
+		_, err := verifyDepositEvents(intent, observed)
+		return err
+	default:
+		return errors.New("unexpected deposit transaction status")
+	}
+}

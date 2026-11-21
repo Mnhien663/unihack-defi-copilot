@@ -120,11 +120,8 @@ func validateExpectedTool(
 func TestEvalSeedV1Structure(t *testing.T) {
 	seed := loadEvalSeed(t)
 
-	if seed.Version != "eval-seed-v1" {
-		t.Fatalf(
-			"eval version = %q, want eval-seed-v1",
-			seed.Version,
-		)
+	if seed.Version != "eval-v1" {
+		t.Fatalf("eval version = %q, want eval-v1", seed.Version)
 	}
 
 	if seed.SystemPromptVersion != SystemPromptVersion {
@@ -135,18 +132,16 @@ func TestEvalSeedV1Structure(t *testing.T) {
 		)
 	}
 
-	if len(seed.Cases) != 10 {
-		t.Fatalf(
-			"eval case count = %d, want 10",
-			len(seed.Cases),
-		)
+	if len(seed.Cases) != 30 {
+		t.Fatalf("eval case count = %d, want 30", len(seed.Cases))
 	}
 
 	expectedCategoryCounts := map[string]int{
-		"read":             4,
-		"ambiguous":        2,
-		"prompt_injection": 2,
-		"write":            2,
+		"read":             12,
+		"ambiguous":        6,
+		"prompt_injection": 6,
+		"write":            4,
+		"upstream_error":   2,
 	}
 
 	actualCategoryCounts := make(map[string]int)
@@ -288,11 +283,8 @@ func TestEvalSeedV1Structure(t *testing.T) {
 		}
 	}
 
-	if englishCaseCount < 4 {
-		t.Fatalf(
-			"English case count = %d, want at least 4",
-			englishCaseCount,
-		)
+	if englishCaseCount != 15 {
+		t.Fatalf("English case count = %d, want 15", englishCaseCount)
 	}
 }
 
@@ -342,10 +334,7 @@ func TestEvalPromptInjectionCasesAreBlockedByCode(t *testing.T) {
 		}
 	}
 
-	if injectionCaseCount != 2 {
-		t.Fatalf(
-			"injection eval case count = %d, want 2",
-			injectionCaseCount,
-		)
+	if injectionCaseCount != 6 {
+		t.Fatalf("injection eval case count = %d, want 6", injectionCaseCount)
 	}
 }

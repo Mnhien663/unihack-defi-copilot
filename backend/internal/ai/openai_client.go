@@ -23,15 +23,17 @@ var (
 )
 
 type OpenAIConfig struct {
-	APIKey string
-	Model  string
-	Logger *slog.Logger
+	APIKey  string
+	Model   string
+	BaseURL string
+	Logger  *slog.Logger
 }
 
 type OpenAIClient struct {
-	client openai.Client
-	model  string
-	logger *slog.Logger
+	client   openai.Client
+	model    string
+	deepSeek bool
+	logger   *slog.Logger
 }
 
 func NewOpenAIClient(config OpenAIConfig) (*OpenAIClient, error) {
@@ -50,13 +52,31 @@ func NewOpenAIClient(config OpenAIConfig) (*OpenAIClient, error) {
 		logger = slog.Default()
 	}
 
+	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
+	deepSeek := strings.HasPrefix(model, "deepseek-")
+
+	if deepSeek &&
+		baseURL != "https://api.deepseek.com" &&
+		baseURL != "https://api.deepseek.com/v1" {
+		return nil, errors.New(
+			"DeepSeek requires OPENAI_BASE_URL=https://api.deepseek.com",
+		)
+	}
+
+	options := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+		option.WithMaxRetries(1),
+	}
+
+	if baseURL != "" {
+		options = append(options, option.WithBaseURL(baseURL))
+	}
+
 	return &OpenAIClient{
-		client: openai.NewClient(
-			option.WithAPIKey(apiKey),
-			option.WithMaxRetries(1),
-		),
-		model:  model,
-		logger: logger,
+		client:   openai.NewClient(options...),
+		model:    model,
+		deepSeek: deepSeek,
+		logger:   logger,
 	}, nil
 }
 
@@ -64,9 +84,10 @@ func NewOpenAIClientFromEnv(
 	logger *slog.Logger,
 ) (*OpenAIClient, error) {
 	return NewOpenAIClient(OpenAIConfig{
-		APIKey: os.Getenv("OPENAI_API_KEY"),
-		Model:  os.Getenv("OPENAI_MODEL"),
-		Logger: logger,
+		APIKey:  os.Getenv("OPENAI_API_KEY"),
+		Model:   os.Getenv("OPENAI_MODEL"),
+		BaseURL: os.Getenv("OPENAI_BASE_URL"),
+		Logger:  logger,
 	})
 }
 
@@ -107,23 +128,43 @@ func (c *OpenAIClient) Complete(
 		len(providerMessages)+2,
 	)
 
-	messages = append(
-		messages,
-		openai.DeveloperMessage(
-			strings.TrimSpace(SystemPrompt),
-		),
-		openai.DeveloperMessage(contextMessage),
-	)
+	if c.deepSeek {
+		messages = append(
+			messages,
+			openai.SystemMessage(
+				strings.TrimSpace(SystemPrompt)+"\n\n"+contextMessage,
+			),
+		)
+	} else {
+		messages = append(
+			messages,
+			openai.DeveloperMessage(strings.TrimSpace(SystemPrompt)),
+			openai.DeveloperMessage(contextMessage),
+		)
+	}
 
 	messages = append(messages, providerMessages...)
 
 	params := openai.ChatCompletionNewParams{
-		Model:               openai.ChatModel(c.model),
-		Messages:            messages,
-		Tools:               providerTools,
-		ParallelToolCalls:   openai.Bool(false),
-		Store:               openai.Bool(false),
-		MaxCompletionTokens: openai.Int(512),
+		Model:             openai.ChatModel(c.model),
+		Messages:          messages,
+		Tools:             providerTools,
+		ParallelToolCalls: openai.Bool(false),
+	}
+
+	requestOptions := []option.RequestOption{}
+
+	if c.deepSeek {
+		params.MaxTokens = openai.Int(1024)
+		requestOptions = append(
+			requestOptions,
+			option.WithJSONSet("thinking", map[string]string{
+				"type": "disabled",
+			}),
+		)
+	} else {
+		params.Store = openai.Bool(false)
+		params.MaxCompletionTokens = openai.Int(512)
 	}
 
 	startedAt := time.Now()
@@ -131,6 +172,7 @@ func (c *OpenAIClient) Complete(
 	completion, err := c.client.Chat.Completions.New(
 		ctx,
 		params,
+		requestOptions...,
 	)
 
 	latency := time.Since(startedAt)

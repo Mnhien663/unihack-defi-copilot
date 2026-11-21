@@ -25,7 +25,7 @@ import (
 const (
 	defaultAIProvider = "mock"
 	defaultDataMode   = "mock"
-	chatTimeout       = 30 * time.Second
+	chatTimeout       = 60 * time.Second
 )
 
 func main() {
@@ -56,12 +56,19 @@ func main() {
 		dataMode = defaultDataMode
 	}
 	prepareSwapEnabled := os.Getenv("ENABLE_PREPARE_SWAP") == "1"
+	prepareDepositEnabled := os.Getenv("ENABLE_PREPARE_DEPOSIT") == "1"
+	if prepareDepositEnabled &&
+		(!prepareSwapEnabled || os.Getenv("ENABLE_SWAP_DECISIONS") != "1") {
+		log.Fatal("ENABLE_PREPARE_DEPOSIT=1 requires prepare swap and decision endpoints enabled")
+	}
 	if prepareSwapEnabled && dataMode != "data_api" {
 		log.Fatal("ENABLE_PREPARE_SWAP=1 requires DATA_MODE=data_api")
 	}
 
 	var prepareSwap ai.SwapPreparationFunc
 	var swapRevalidator tools.ReviewedSwapRevalidator
+	var prepareDeposit ai.SwapPreparationFunc
+	var depositRevalidator tools.ReviewedDepositRevalidator
 	var swapReceiptReader avalanche.ReceiptReader
 	var nativeClient tools.ChainClient
 	var tokenClient tools.TokenBalanceClient
@@ -186,6 +193,27 @@ func main() {
 		if err != nil {
 			log.Fatalf("Cannot create vault reader: %v", err)
 		}
+		if prepareDepositEnabled {
+			simulator, err := avalanche.NewDepositSimulator(rpcClient)
+			if err != nil {
+				log.Fatalf("Cannot create deposit simulator: %v", err)
+			}
+
+			preparer, err := avalanche.NewDepositPreparer(
+				vaultReader,
+				simulator,
+				strings.TrimSpace(os.Getenv("PREPARE_DEPOSIT_MAX_ASSETS_RAW")),
+			)
+			if err != nil {
+				log.Fatalf("Cannot create deposit preparer: %v", err)
+			}
+
+			depositRevalidator = preparer
+			prepareDeposit, err = tools.NewPrepareDepositCallback(preparer)
+			if err != nil {
+				log.Fatalf("Cannot create prepare deposit callback: %v", err)
+			}
+		}
 
 		const vaultMetricMaxAge = 5 * time.Minute
 
@@ -285,6 +313,12 @@ func main() {
 		writeToolNames = append(writeToolNames, tools.PrepareSwapToolName)
 	}
 
+	if prepareDeposit != nil {
+		if err := registry.Register(tools.PrepareDepositProposal{}); err != nil {
+			log.Fatalf("Cannot register prepare deposit proposal: %v", err)
+		}
+		writeToolNames = append(writeToolNames, tools.PrepareDepositToolName)
+	}
 	policies := ai.NewStaticPolicyEngine(readToolNames, writeToolNames)
 
 	provider := strings.ToLower(
@@ -353,6 +387,17 @@ func main() {
 		log.Fatalf("Cannot create AI agent: %v", err)
 	}
 
+	if prepareDeposit != nil {
+		if err := agent.ConfigureDepositPreparation(prepareDeposit); err != nil {
+			log.Fatalf("Cannot configure deposit preparation: %v", err)
+		}
+
+		swapRevalidator = tools.ReviewedActionRevalidator{
+			Swap:    swapRevalidator,
+			Deposit: depositRevalidator,
+		}
+	}
+
 	injectedChatHandler, err := handlers.NewChatHandler(agent)
 	if err != nil {
 		log.Fatalf("Cannot create chat handler: %v", err)
@@ -362,7 +407,7 @@ func main() {
 		ErrorHandler: handlers.ErrorHandler,
 		BodyLimit:    32 * 1024, // 32 KiB
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 35 * time.Second,
+		WriteTimeout: 65 * time.Second,
 	})
 
 	app.Use(requestid.New())

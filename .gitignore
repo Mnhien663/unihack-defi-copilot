@@ -153,3 +153,5 @@ vite.config.ts.timestamp-*
 /contracts/artifacts/
 /contracts/cache/
 /contracts/types/
+
+/backend/server.exe

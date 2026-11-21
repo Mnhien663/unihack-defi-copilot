@@ -1168,3 +1168,51 @@ func TestAgentStopsWhenSessionStoreUnavailable(t *testing.T) {
 		t.Fatal("database error must not return a pending action")
 	}
 }
+
+func TestEmptyLiquidationResponse(t *testing.T) {
+	input := AgentInput{
+		WalletAddress: "0x0000000000000000000000000000000000000001",
+		ChainID:       43113,
+		Message:       "Tính giá thanh lý và giải thích công thức",
+		Locale:        "vi",
+	}
+
+	for _, tc := range []struct {
+		name      string
+		positions string
+		want      bool
+	}{
+		{"empty array", `[]`, true},
+		{"null is not empty", `null`, false},
+		{"nonempty position", `[{}]`, false},
+		{"wrong data type", `{}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(map[string]any{
+				"wallet_address": input.WalletAddress,
+				"positions":      json.RawMessage(tc.positions),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			executions := []ToolExecution{{
+				Call: ToolCall{Name: "get_lending_position"},
+				Result: ToolResult{
+					Data:       data,
+					Source:     "test RPC",
+					ChainID:    43113,
+					ObservedAt: time.Now(),
+				},
+			}}
+
+			message, ok := emptyLiquidationResponse(input, executions)
+			if ok != tc.want {
+				t.Fatalf("matched=%v, want %v", ok, tc.want)
+			}
+			if ok && message == "" {
+				t.Fatal("grounded response is empty")
+			}
+		})
+	}
+}

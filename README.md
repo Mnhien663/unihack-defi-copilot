@@ -73,3 +73,39 @@ go test -v ./internal/avalanche -run '^TestLFJQuoterExactInput$' -count=1
 ```
 
 Contract test của tool gồm 5 case offline: quote hai chiều, slippage bằng 0, amount bằng 0 và quote hết hạn. Luồng HTTP với AI mock + Fuji RPC đã xác nhận thành công. Luồng Gemini chọn tool quote chưa xác nhận do request thử nghiệm trả HTTP 504.
+
+## Validation and current limitations
+
+### Verified
+
+- Backend unit tests cover confirmation signatures, wrong-session
+  challenges, expired actions, changed quotes, revalidation timeouts,
+  transaction calldata mismatch and receipt block identity.
+- PostgreSQL integration tests cover concurrent pending-action decisions,
+  transaction-hash uniqueness and atomic turn persistence.
+- Fuji swap E2E passed on 21 November 2026 at 12:56:30 ICT:
+  0.01 USDT → 0.009999 USDC. The app reported mined and the backend
+  verified the receipt.
+  Transaction:
+  `0x3d2b33cae48274f62b4743afeaadd96be5c276250a54cbba827ff7cb35877bdd`
+- Vault deposit preparation through chat returned an unsigned pending
+  action for 0.1 DDEMO with a minimum of 0.099 dvDDEMO.
+- A separate deposit through core-check.html succeeded on Fuji:
+  0.1 DDEMO → 0.1 dvDDEMO, block 61414919.
+  Transaction:
+  `0x00286e361665632943d77c8c6250615ee374e48b622b8b5225651f02608d2f56`
+
+### Evaluation
+
+The latest reviewed bilingual run contains 30 cases:
+28 HTTP 200 responses and 2 skipped upstream-fault cases.
+HTTP success is not a semantic pass score.
+See `eval/eval_report.md` for captured responses and manual findings.
+
+### Remaining limitations
+
+- The incorrect Vietnamese liquidation formula observed during evaluation
+  was addressed with a deterministic empty-position response.
+  Vietnamese and English runtime checks passed on 21 November 2026
+  at 16:11 ICT. Liquidation calculations for funded borrowing positions
+  remain unverified.
