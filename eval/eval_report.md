@@ -67,6 +67,21 @@ Follow-up: the liquidation prompt was tightened after reviewing this run.
 The correction requires a new runtime verification and does not change the
 captured failing response. No overall pass percentage is claimed.
 
+### Follow-up verification after code correction
+
+The original failing response below is preserved.
+
+A deterministic empty-position response was added and checked at runtime
+on 21 November 2026:
+
+| Language | Request ID | Block | Result |
+|---|---|---:|---|
+| Vietnamese | f99f8bd3-1e52-4d4b-96de-0afd40680193 | 61418646 | PASS: no price/formula; source retained; no pending action |
+| English | fa9f8bd3-1e52-4d4b-96de-0afd40680193 | 61418647 | PASS: no price/formula; source retained; no pending action |
+
+This verifies empty-position handling only, not liquidation calculations
+for positions with collateral and debt.
+
 ## Raw results
 
 ```json

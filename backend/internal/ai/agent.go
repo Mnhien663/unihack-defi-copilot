@@ -329,6 +329,10 @@ func (a *Agent) Run(
 				response.Message.Content,
 			)
 
+			if grounded, ok := emptyLiquidationResponse(input, executions); ok {
+				finalContent = grounded
+			}
+
 			if finalContent == "" {
 				return AgentOutput{}, ErrEmptyLLMResponse
 			}
@@ -627,4 +631,78 @@ func (a *Agent) Run(
 	}
 
 	return AgentOutput{}, ErrMaxAgentIterations
+}
+
+func emptyLiquidationResponse(
+	input AgentInput,
+	executions []ToolExecution,
+) (string, bool) {
+	question := strings.ToLower(input.Message)
+	if !strings.Contains(question, "liquidat") &&
+		!strings.Contains(question, "thanh lý") &&
+		!strings.Contains(question, "thanh ly") {
+		return "", false
+	}
+
+	for i := len(executions) - 1; i >= 0; i-- {
+		execution := executions[i]
+		if execution.Call.Name != "get_lending_position" {
+			continue
+		}
+
+		result := execution.Result
+		if result.Error != nil ||
+			result.ChainID != input.ChainID ||
+			result.Source == "" ||
+			result.ObservedAt.IsZero() {
+			return "", false
+		}
+
+		var data struct {
+			WalletAddress string          `json:"wallet_address"`
+			Positions     json.RawMessage `json:"positions"`
+		}
+		if err := json.Unmarshal(result.Data, &data); err != nil {
+			return "", false
+		}
+		if !strings.EqualFold(data.WalletAddress, input.WalletAddress) {
+			return "", false
+		}
+
+		raw := strings.TrimSpace(string(data.Positions))
+		if !strings.HasPrefix(raw, "[") {
+			return "", false
+		}
+
+		var positions []json.RawMessage
+		if err := json.Unmarshal(data.Positions, &positions); err != nil ||
+			len(positions) != 0 {
+			return "", false
+		}
+
+		observedAt := result.ObservedAt.UTC().Format(time.RFC3339)
+		if input.Locale == "vi" {
+			return fmt.Sprintf(
+				"Không có vị thế Aave V3 được trả về cho ví %s "+
+					"trên Avalanche Fuji (chain %d). "+
+					"Không có vị thế để tính giá thanh lý; "+
+					"tôi không đưa ra giá hoặc công thức cho trường hợp này.\n\n"+
+					"Nguồn: %s. Thời điểm quan sát: %s.",
+				input.WalletAddress, result.ChainID,
+				result.Source, observedAt,
+			), true
+		}
+
+		return fmt.Sprintf(
+			"No Aave V3 positions were returned for wallet %s "+
+				"on Avalanche Fuji (chain %d). "+
+				"There is no position for a liquidation-price calculation; "+
+				"no price or formula is provided for this case.\n\n"+
+				"Source: %s. Observed at: %s.",
+			input.WalletAddress, result.ChainID,
+			result.Source, observedAt,
+		), true
+	}
+
+	return "", false
 }

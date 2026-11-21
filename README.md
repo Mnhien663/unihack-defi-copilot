@@ -104,13 +104,8 @@ See `eval/eval_report.md` for captured responses and manual findings.
 
 ### Remaining limitations
 
-- Deposit E2E through the main app's confirmation and receipt flow
-  has not yet been verified.
-- The evaluated Vietnamese liquidation response contained an incorrect
-  formula. A prompt correction was committed; runtime verification
-  after rebuilding remains pending.
-- Controlled upstream-failure evaluation is not configured.
-- DemoVault uses testnet demo assets and has no configured yield strategy.
-- Swap E2E used backend 3cc7fd0, frontend 66558f2, and local idempotency
-  and deadline/modal patches. Those patches must be preserved in the
-  integrated submission version.
+- The incorrect Vietnamese liquidation formula observed during evaluation
+  was addressed with a deterministic empty-position response.
+  Vietnamese and English runtime checks passed on 21 November 2026
+  at 16:11 ICT. Liquidation calculations for funded borrowing positions
+  remain unverified.
