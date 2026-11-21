@@ -313,14 +313,13 @@ func main() {
 		writeToolNames = append(writeToolNames, tools.PrepareSwapToolName)
 	}
 
-	policies := ai.NewStaticPolicyEngine(readToolNames, writeToolNames)
-
 	if prepareDeposit != nil {
 		if err := registry.Register(tools.PrepareDepositProposal{}); err != nil {
 			log.Fatalf("Cannot register prepare deposit proposal: %v", err)
 		}
 		writeToolNames = append(writeToolNames, tools.PrepareDepositToolName)
 	}
+	policies := ai.NewStaticPolicyEngine(readToolNames, writeToolNames)
 
 	provider := strings.ToLower(
 		strings.TrimSpace(os.Getenv("AI_PROVIDER")),

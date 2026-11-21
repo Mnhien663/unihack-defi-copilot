@@ -429,8 +429,9 @@ func (a *Agent) Run(
 
 			if !decision.Allowed {
 				return AgentOutput{}, fmt.Errorf(
-					"%w: %s",
+					"%w: tool=%q reason=%s",
 					ErrPolicyDenied,
+					call.Name,
 					decision.Reason,
 				)
 			}

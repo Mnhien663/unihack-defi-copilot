@@ -229,8 +229,25 @@ func executeCase(
 		return result
 	}
 
+	request, err := http.NewRequest(
+		http.MethodPost,
+		endpoint,
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		result.Error = err.Error()
+		result.ReviewStatus = "execution_error"
+		return result
+	}
+
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	request.Header.Set(
+		"Idempotency-Key",
+		fmt.Sprintf("eval-%d", time.Now().UnixNano()),
+	)
+
 	started := time.Now()
-	response, err := client.Post(endpoint, "application/json", bytes.NewReader(payload))
+	response, err := client.Do(request)
 	if err != nil {
 		result.LatencyMS = time.Since(started).Milliseconds()
 		result.Error = err.Error()
