@@ -648,3 +648,236 @@ func TestConfirmReviewedDeposit(t *testing.T) {
 		})
 	}
 }
+
+type depositPreparationCallbackStub func(
+	context.Context,
+	string,
+	avalanche.PrepareDepositIntent,
+) (avalanche.PrepareDepositResult, error)
+
+func (f depositPreparationCallbackStub) PrepareDeposit(
+	ctx context.Context,
+	wallet string,
+	intent avalanche.PrepareDepositIntent,
+) (avalanche.PrepareDepositResult, error) {
+	return f(ctx, wallet, intent)
+}
+
+func TestPrepareDepositCallbackRejectsInvalidArguments(t *testing.T) {
+	service := depositPreparationCallbackStub(func(
+		context.Context,
+		string,
+		avalanche.PrepareDepositIntent,
+	) (avalanche.PrepareDepositResult, error) {
+		t.Fatal("invalid arguments must not reach the service")
+		return avalanche.PrepareDepositResult{}, nil
+	})
+
+	callback, err := NewPrepareDepositCallback(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{"malformed JSON", `{`},
+		{"missing assets", `{"min_shares_raw":"99"}`},
+		{"missing minimum", `{"assets_raw":"100"}`},
+		{"numeric amount", `{"assets_raw":100,"min_shares_raw":"99"}`},
+		{"model calldata", `{"assets_raw":"100","min_shares_raw":"99","calldata":"0xdead"}`},
+		{"model wallet", `{"assets_raw":"100","min_shares_raw":"99","wallet_address":"0xdead"}`},
+		{"model chain", `{"assets_raw":"100","min_shares_raw":"99","chain_id":43114}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := callback(
+				context.Background(),
+				"0x0000000000000000000000000000000000000001",
+				43113,
+				json.RawMessage(tc.args),
+			)
+			if err == nil || len(got.Arguments) != 0 ||
+				!got.ExpiresAt.IsZero() {
+				t.Fatalf("expected rejection without payload: %+v, err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestPrepareDepositCallback(t *testing.T) {
+	if _, err := NewPrepareDepositCallback(nil); err == nil {
+		t.Fatal("nil service must be rejected")
+	}
+
+	const wallet = "0x0000000000000000000000000000000000000001"
+	const assets = "100000000000000000"
+	const minimum = "99000000000000000"
+
+	expiry := time.Now().UTC().Add(5 * time.Minute).Truncate(time.Second)
+	upstreamErr := errors.New("deposit service unavailable")
+
+	for _, tc := range []struct {
+		name       string
+		status     string
+		blocker    string
+		noTx       bool
+		deadline   uint64
+		preview    time.Time
+		serviceErr error
+		wantError  bool
+	}{
+		{
+			name: "ready", status: "ready_for_review",
+			deadline: uint64(expiry.Unix()), preview: expiry,
+		},
+		{
+			name: "approval required", status: "approval_required",
+			blocker: "ERC20_APPROVAL_REQUIRED",
+		},
+		{
+			name: "blocked", status: "blocked",
+			blocker: "INSUFFICIENT_BUDGET",
+		},
+		{
+			name: "reverted", status: "reverted",
+			blocker: "SIMULATION_REVERTED",
+		},
+		{
+			name: "service error", serviceErr: upstreamErr,
+			wantError: true,
+		},
+		{
+			name: "unknown status", status: "unexpected",
+			wantError: true,
+		},
+		{
+			name: "ready without transaction", status: "ready_for_review",
+			noTx: true, wantError: true,
+		},
+		{
+			name: "ready with blocker", status: "ready_for_review",
+			blocker: "INSUFFICIENT_BUDGET", wantError: true,
+		},
+		{
+			name: "zero deadline", status: "ready_for_review",
+			preview: expiry, wantError: true,
+		},
+		{
+			name: "overflow deadline", status: "ready_for_review",
+			deadline: uint64(1) << 63, preview: expiry, wantError: true,
+		},
+		{
+			name: "expired", status: "ready_for_review",
+			deadline: uint64(time.Now().Add(-time.Minute).Unix()),
+			preview:  expiry, wantError: true,
+		},
+		{
+			name: "deadline exceeds preview", status: "ready_for_review",
+			deadline: uint64(expiry.Unix()),
+			preview:  expiry.Add(-time.Second), wantError: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+
+			// Callback fixture only; calldata validation belongs to the preparer.
+			built := &avalanche.BuiltDepositTransaction{}
+			built.Prepared.Tx = avalanche.UnsignedTx{
+				ChainID: 43113,
+				From:    wallet,
+				To:      "0x0000000000000000000000000000000000000002",
+				Value:   "0",
+				Data:    "0x1234",
+			}
+			built.Summary.OwnerAddress = wallet
+			built.Summary.Assets.Raw = assets
+			built.Summary.MinShares.Raw = minimum
+			built.Summary.Deadline = tc.deadline
+			built.Summary.PreviewExpiresAt = tc.preview
+
+			service := depositPreparationCallbackStub(func(
+				_ context.Context,
+				sessionWallet string,
+				intent avalanche.PrepareDepositIntent,
+			) (avalanche.PrepareDepositResult, error) {
+				calls++
+				if sessionWallet != wallet ||
+					intent.WalletAddress != wallet ||
+					intent.ChainID != 43113 ||
+					intent.AssetsRaw != assets ||
+					intent.MinSharesRaw != minimum {
+					t.Fatalf("unexpected trusted context or amounts: %+v", intent)
+				}
+
+				result := avalanche.PrepareDepositResult{
+					Status:      tc.status,
+					Transaction: built,
+				}
+				if tc.blocker != "" {
+					result.Blockers = []string{tc.blocker}
+				}
+				if tc.noTx {
+					result.Transaction = nil
+				}
+				return result, tc.serviceErr
+			})
+
+			callback, err := NewPrepareDepositCallback(service)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := callback(
+				context.Background(),
+				wallet,
+				43113,
+				json.RawMessage(
+					`{"assets_raw":"`+assets+`","min_shares_raw":"`+minimum+`"}`,
+				),
+			)
+
+			if calls != 1 {
+				t.Fatalf("service calls=%d; want 1", calls)
+			}
+			if tc.wantError {
+				if err == nil || len(got.Arguments) != 0 ||
+					!got.ExpiresAt.IsZero() {
+					t.Fatalf("expected error without payload: %+v, err=%v", got, err)
+				}
+				if tc.serviceErr != nil && !errors.Is(err, tc.serviceErr) {
+					t.Fatalf("service error was not preserved: %v", err)
+				}
+				return
+			}
+			if err != nil || got.Status != tc.status {
+				t.Fatalf("unexpected result: %+v, err=%v", got, err)
+			}
+
+			if tc.status != "ready_for_review" {
+				if len(got.Arguments) != 0 || !got.ExpiresAt.IsZero() ||
+					len(got.Blockers) != 1 || got.Blockers[0] != tc.blocker {
+					t.Fatalf("blocked action must retain blocker without payload: %+v", got)
+				}
+				return
+			}
+
+			var payload struct {
+				Transaction avalanche.UnsignedTx       `json:"transaction"`
+				Summary     avalanche.DepositTxSummary `json:"summary"`
+			}
+			if err := json.Unmarshal(got.Arguments, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Transaction != built.Prepared.Tx ||
+				payload.Summary.OwnerAddress != wallet ||
+				payload.Summary.Assets.Raw != assets ||
+				payload.Summary.MinShares.Raw != minimum ||
+				payload.Summary.Deadline != tc.deadline ||
+				!payload.Summary.PreviewExpiresAt.Equal(expiry) ||
+				!got.ExpiresAt.Equal(expiry) {
+				t.Fatalf("prepared payload or exact amounts changed: %s", got.Arguments)
+			}
+		})
+	}
+}
