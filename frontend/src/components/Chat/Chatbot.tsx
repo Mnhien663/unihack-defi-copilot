@@ -1,5 +1,5 @@
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import './Chatbot.css';
 import ChatWelcome from "./ChatWelcome";
 
@@ -22,6 +22,8 @@ import { useSwapReceiptSigning } from '../../hooks/useSwapReceiptSigning';
 
 // Chỉ bật khi kiểm thử API cùng Dev 1
 const ENABLE_DEV_API_TEST = true;
+const SESSION_STORAGE_KEY = 'deficopilot_chat_session_id';
+const NEW_CONVERSATION_EVENT = 'deficopilot:new-conversation';
 
 type ChatMessage = {
   id: number;
@@ -43,10 +45,8 @@ function Chatbot() {
   const [isLoading, setIsLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  const [sessionId] = useState<string>(() => {
-    const key = 'deficopilot_chat_session_id';
-
-    const saved = sessionStorage.getItem(key);
+  const [sessionId, setSessionId] = useState<string>(() => {
+    const saved = sessionStorage.getItem(SESSION_STORAGE_KEY);
 
     if (
       saved &&
@@ -56,7 +56,7 @@ function Chatbot() {
     }
 
     const newSessionId = crypto.randomUUID();
-    sessionStorage.setItem(key, newSessionId);
+    sessionStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
 
     return newSessionId;
   });
@@ -96,23 +96,71 @@ function Chatbot() {
   const [recoveredReceiptError, setRecoveredReceiptError] =
     useState<string | null>(null);
 
+  // A new conversation starts with no sample user/assistant exchange.
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 1,
-      role: 'assistant',
-      content: 'Xin chào! Tôi là DeFi Copilot.',
-    },
-    {
-      id: 2,
-      role: 'user',
-      content: 'Avalanche là gì?',
-    },
-    {
-      id: 3,
-      role: 'assistant',
-      content: 'Avalanche là một nền tảng blockchain.',
-    },
+    { id: 1, role: 'assistant', content: 'Xin chào! Tôi là DeFi Copilot.' },
   ]);
+
+  const handleNewConversation = useCallback(() => {
+    // Never reset the session while a chat request or receipt recovery is running.
+    if (isLoading || isSigning || isRecoveringHash || isRecoveringReceipt) {
+      setApiError('Please finish the current request or receipt recovery first.');
+      return;
+    }
+
+    // Changing sessions here would hide recovery UI for an already-broadcast swap.
+    if (
+      recoveredSwap?.sessionId === sessionId &&
+      recoveredReceiptStatus !== 'mined'
+    ) {
+      setApiError(
+        'A previous swap needs receipt verification. Recover its hash/receipt before starting a new conversation.'
+      );
+      return;
+    }
+
+    // Do not unmount a visible review while its signature flow may be in progress.
+    if (isConfirmationOpen && pendingAction) {
+      setApiError('Close the transaction review before starting a new conversation.');
+      return;
+    }
+
+    if (
+      pendingAction &&
+      !window.confirm(
+        'Start a new conversation? The current prepared transaction review will be discarded. Prepare a fresh action before signing.'
+      )
+    ) {
+      return;
+    }
+
+    const nextSessionId = crypto.randomUUID();
+    sessionStorage.setItem(SESSION_STORAGE_KEY, nextSessionId);
+    setSessionId(nextSessionId);
+    setDraft('');
+    setMessages([
+      { id: Date.now(), role: 'assistant', content: 'Xin chào! Tôi là DeFi Copilot.' },
+    ]);
+    setPendingAction(null);
+    setIsMockAction(false);
+    setIsConfirmationOpen(false);
+    setApiError(null);
+    setRecoveredHashRecorded(false);
+    setRecoveryStatus(null);
+    setRecoveryError(null);
+    setRecoveredReceiptStatus(null);
+    setRecoveredReceiptError(null);
+    window.requestAnimationFrame(() => document.getElementById('chat-input')?.focus());
+  }, [
+    isLoading, isSigning, isRecoveringHash, isRecoveringReceipt,
+    recoveredSwap, sessionId, recoveredReceiptStatus, isConfirmationOpen, pendingAction,
+  ]);
+
+  // Sidebar can dispatch this event without changing its existing navigation logic.
+  useEffect(() => {
+    window.addEventListener(NEW_CONVERSATION_EVENT, handleNewConversation);
+    return () => window.removeEventListener(NEW_CONVERSATION_EVENT, handleNewConversation);
+  }, [handleNewConversation]);
 
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -356,6 +404,24 @@ function Chatbot() {
 
   return (
     <section className="chatbot">
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button
+          type="button"
+          onClick={handleNewConversation}
+          disabled={isLoading || isSigning || isRecoveringHash || isRecoveringReceipt}
+          aria-label="Start a new conversation"
+          style={{
+            padding: '8px 14px',
+            borderRadius: 10,
+            border: '1px solid #cbd5e1',
+            background: '#fff',
+            color: '#192238',
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+          }}
+        >
+          + New Conversation
+        </button>
+      </div>
       <ChatWelcome onSelect={setDraft} />
 
       {import.meta.env.DEV && (

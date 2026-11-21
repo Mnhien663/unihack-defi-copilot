@@ -31,8 +31,11 @@ export function Sidebar({
         <button
           className="dc-new-chat"
           type="button"
-          disabled
-          title="New Conversation will be enabled later"
+          onClick={() => {
+            window.dispatchEvent(
+              new Event('deficopilot:new-conversation')
+            );
+          }}
         >
           + New Conversation
         </button>
