@@ -550,7 +550,11 @@ async function handleRefreshReceipt() {
         <p>
           {isMock
             ? 'MOCK PREVIEW — No real transaction'
-            : 'API REVIEW — Transaction not submitted'}
+            : receiptStatus === 'mined'
+              ? 'API REVIEW — Receipt verified by Backend'
+              : transactionHash
+                ? 'API REVIEW — Transaction broadcasted'
+                : 'API REVIEW — Transaction not submitted'}
         </p>
         <div className="confirmation-network-status" role="status">
           {!isWalletMatch && (
@@ -639,14 +643,19 @@ async function handleRefreshReceipt() {
         {decisionStatus && (
           <p role="status">
             {decisionStatus === 'confirmed'
-              ? 'Backend confirmed — Transaction not submitted yet.'
+              ? receiptStatus === 'mined'
+                ? 'Backend confirmed — Receipt verified.'
+                : transactionHash
+                  ? 'Backend confirmed — Transaction broadcasted.'
+                  : 'Backend confirmed — Transaction not submitted yet.'
               : 'Transaction rejected.'}
           </p>
         )}
 
         {reviewedSendRequest &&
           decisionStatus === 'confirmed' &&
-          !isMock && (
+          !isMock &&
+          !transactionHash && (
             <p role="status">
               Transaction passed local validation.
               Not submitted to blockchain.
@@ -678,7 +687,9 @@ async function handleRefreshReceipt() {
 
               {transactionHash && (
                 <p role="status">
-                  Transaction broadcasted. Receipt not verified.
+                  {receiptStatus === 'mined'
+                    ? 'Transaction mined — Backend verified receipt.'
+                    : 'Transaction broadcasted. Receipt not verified.'}
                   <code>{transactionHash}</code>
                 </p>
               )}
@@ -710,8 +721,9 @@ async function handleRefreshReceipt() {
 
                   {hashRecorded && (
                     <p role="status">
-                      Backend recorded transaction.
-                      Status: {submitHashStatus}
+                      {receiptStatus === 'mined'
+                        ? 'Backend recorded hash — Receipt verified.'
+                        : `Backend recorded transaction. Status: ${submitHashStatus}`}
                     </p>
                   )}
                 </div>
