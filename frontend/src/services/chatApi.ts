@@ -3,13 +3,15 @@ import type { ChatRequest, ChatResponse } from '../types/api';
 
 export async function sendChatMessage(
   request: ChatRequest,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  idempotencyKey: string = crypto.randomUUID()
 ): Promise<ChatResponse> {
   // 1. Gửi request đến Go Backend qua Vite Proxy
   const response = await fetch('/api/v1/chat', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
     },
     body: JSON.stringify(request),
     signal,
