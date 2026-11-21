@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -167,6 +168,34 @@ func (c *OpenAIClient) Complete(
 		params.MaxCompletionTokens = openai.Int(512)
 	}
 
+	serializedParams, err := json.Marshal(params)
+	if err != nil {
+		return LLMResponse{}, fmt.Errorf("serialize completion parameters: %w", err)
+	}
+
+	var requestMetadata struct {
+		Tools []struct {
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(serializedParams, &requestMetadata); err != nil {
+		return LLMResponse{}, fmt.Errorf("inspect serialized tool names: %w", err)
+	}
+
+	toolNames := make([]string, 0, len(requestMetadata.Tools))
+	for _, tool := range requestMetadata.Tools {
+		toolNames = append(toolNames, tool.Function.Name)
+	}
+
+	c.logger.InfoContext(
+		ctx,
+		"Serialized completion tool names",
+		"tool_names",
+		toolNames,
+	)
+
 	startedAt := time.Now()
 
 	completion, err := c.client.Chat.Completions.New(
@@ -221,6 +250,13 @@ func (c *OpenAIClient) Complete(
 
 	providerMessage := completion.Choices[0].Message
 
+	c.logger.InfoContext(
+		ctx,
+		"Completion tool calls before mapping",
+		"tool_call_count",
+		len(providerMessage.ToolCalls),
+	)
+
 	toolCalls, err := fromOpenAIToolCalls(
 		providerMessage.ToolCalls,
 	)
@@ -260,6 +296,14 @@ func (c *OpenAIClient) Complete(
 		completion.Usage.CompletionTokens,
 		"total_tokens",
 		completion.Usage.TotalTokens,
+		"tool_names",
+		func() []string {
+			names := make([]string, 0, len(toolCalls))
+			for _, call := range toolCalls {
+				names = append(names, call.Name)
+			}
+			return names
+		}(),
 		"tool_call_count",
 		len(toolCalls),
 	)
