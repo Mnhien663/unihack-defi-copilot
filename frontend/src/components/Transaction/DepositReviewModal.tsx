@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useConnection, useSignMessage } from 'wagmi';
+import { useConnection, useSendTransaction, useSignMessage } from 'wagmi';
 import {
   executeSignedDecision,
   type PendingDecision,
 } from '../../services/pendingActionApi';
+import { useSwapReceiptSigning } from '../../hooks/useSwapReceiptSigning';
+import {
+  buildReviewedDepositSendRequest,
+  type DepositSendRequest,
+} from '../../types/depositTransaction';
+import {
+  hasStoredPendingDeposit,
+  savePendingDeposit,
+  updatePendingDepositReceipt,
+} from '../../utils/pendingDepositStorage';
+import { hasStoredPendingSwap } from '../../utils/pendingSwapStorage';
 import './DepositReviewModal.css';
 
 const FUJI_CHAIN_ID = 43113;
-const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
-const RAW_RE = /^(0|[1-9][0-9]*)$/;
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 type JsonObject = Record<string, unknown>;
 
@@ -20,17 +30,15 @@ export type DepositPendingAction = {
   chain_id?: number;
   wallet_address?: string;
   expires_at?: string;
-  arguments?: { summary?: unknown };
+  arguments?: { summary?: unknown; transaction?: unknown };
 };
 
-export function isDepositPendingAction(
-  value: unknown,
-): value is DepositPendingAction {
-  return isRecord(value) && value.tool_name === 'prepare_vault_deposit';
+function isRecord(value: unknown): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isRecord(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+export function isDepositPendingAction(value: unknown): value is DepositPendingAction {
+  return isRecord(value) && value.tool_name === 'prepare_vault_deposit';
 }
 
 function readString(source: JsonObject, key: string): string | null {
@@ -38,45 +46,16 @@ function readString(source: JsonObject, key: string): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-// Never turn financial raw amounts into JS numbers: precision must be preserved.
-function rawAmount(source: JsonObject, ...keys: string[]): string | null {
-  for (const key of keys) {
-    const candidate = source[key];
-    const value = isRecord(candidate) ? candidate.raw : candidate;
-    if (typeof value === 'string' && RAW_RE.test(value)) return value;
-  }
-  return null;
-}
-
-function formattedAmount(source: JsonObject, key: string): string | null {
-  const item = source[key];
-  return isRecord(item) ? readString(item, 'formatted') : null;
-}
-
-function readVault(summary: JsonObject): string | null {
-  const direct = readString(summary, 'vault_address');
-  if (direct) return direct;
-  if (typeof summary.vault === 'string') return summary.vault;
-  return isRecord(summary.vault) ? readString(summary.vault, 'address') : null;
-}
-
-function readDeadlineMs(raw: unknown): number {
-  // Backend deadline is Unix seconds. Also accept RFC3339 for defensive display.
-  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) {
-    return raw * 1000;
-  }
-  if (typeof raw === 'string' && /^\d+$/.test(raw)) {
-    const seconds = Number(raw);
-    return Number.isSafeInteger(seconds) && seconds > 0 ? seconds * 1000 : NaN;
-  }
-  return typeof raw === 'string' ? Date.parse(raw) : NaN;
+function amount(summary: JsonObject, key: string): string {
+  const info = isRecord(summary[key]) ? summary[key] : {};
+  const raw = readString(info, 'raw');
+  const formatted = readString(info, 'formatted');
+  return raw ? `${formatted ? `${formatted} · ` : ''}raw: ${raw}` : 'Thiếu raw string';
 }
 
 function displayTime(ms: number): string {
   return Number.isFinite(ms)
-    ? new Date(ms).toLocaleString('vi-VN', {
-        timeZone: 'Asia/Ho_Chi_Minh',
-      })
+    ? new Date(ms).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     : 'Thiếu / không hợp lệ';
 }
 
@@ -87,6 +66,15 @@ type DepositReviewModalProps = {
   onClose: () => void;
 };
 
+type ApprovedScope = {
+  actionId: string;
+  reviewHash: string;
+  sessionId: string;
+  wallet: string;
+  expiresAtMs: number;
+  summarySnapshot: string;
+};
+
 export default function DepositReviewModal({
   isOpen,
   pendingAction,
@@ -95,129 +83,262 @@ export default function DepositReviewModal({
 }: DepositReviewModalProps) {
   const { address, chainId, isConnected } = useConnection();
   const signMessage = useSignMessage();
+  const sendTransaction = useSendTransaction();
+  const {
+    submitHashWithWallet,
+    refreshReceiptWithWallet,
+    isSigning,
+  } = useSwapReceiptSigning(false);
+
   const [now, setNow] = useState(Date.now);
   const [busy, setBusy] = useState(false);
   const [decisionStatus, setDecisionStatus] = useState<'confirmed' | 'rejected' | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [approvedScope, setApprovedScope] = useState<ApprovedScope | null>(null);
+  const [sendRequest, setSendRequest] = useState<DepositSendRequest | null>(null);
+  const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [hashRecorded, setHashRecorded] = useState(false);
+  const [hashStatus, setHashStatus] = useState<string | null>(null);
+  const [hashError, setHashError] = useState<string | null>(null);
+  const [hashBusy, setHashBusy] = useState(false);
+  const [receiptStatus, setReceiptStatus] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [receiptBusy, setReceiptBusy] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !busy && !sendTransaction.isPending &&
+          !hashBusy && !receiptBusy && !signMessage.isPending && !isSigning) onClose();
+    }
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', onKeyDown);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, busy, sendTransaction.isPending,
+      hashBusy, receiptBusy, signMessage.isPending, isSigning]);
 
-  // Reset only when a *different* pending action is reviewed, not on close/reopen.
+  // Keep the state when the same review is reopened; discard it for a new action.
   useEffect(() => {
     setDecisionStatus(null);
     setDecisionError(null);
-  }, [pendingAction.pending_action_id]);
+    setApprovedScope(null);
+    setSendRequest(null);
+    setTxHash(null);
+    setSendError(null);
+    setHashRecorded(false);
+    setHashStatus(null);
+    setHashError(null);
+    setReceiptStatus(null);
+    setReceiptError(null);
+  }, [pendingAction.pending_action_id, sessionId]);
 
-  const summary = useMemo<JsonObject>(() =>
-    isRecord(pendingAction.arguments?.summary)
-      ? pendingAction.arguments.summary
-      : {},
-  [pendingAction.arguments?.summary]);
-
-  const vault = readVault(summary);
-  const assetsRaw = rawAmount(summary, 'assets_raw', 'assets');
-  const previewSharesRaw = rawAmount(summary, 'preview_shares_raw', 'preview_shares');
-  const minSharesRaw = rawAmount(summary, 'min_shares_raw', 'min_shares');
-  const assetToken = isRecord(summary.asset)
-    ? readString(summary.asset, 'symbol')
-    : readString(summary, 'asset_symbol');
-  const deadlineMs = readDeadlineMs(summary.deadline);
-  const expiresAtMs = pendingAction.expires_at
-    ? Date.parse(pendingAction.expires_at)
-    : NaN;
-
-  const sameWallet = Boolean(
-    isConnected && address && pendingAction.wallet_address &&
-    address.toLowerCase() === pendingAction.wallet_address.toLowerCase(),
-  );
-  const owner = readString(summary, 'owner_address');
-  const ownerMatches = !owner || (ADDRESS_RE.test(owner) &&
-    Boolean(address && owner.toLowerCase() === address.toLowerCase()));
-
-  const amountRelationshipValid = Boolean(
-    assetsRaw && previewSharesRaw && minSharesRaw &&
-    BigInt(assetsRaw!) > 0n &&
-    BigInt(previewSharesRaw!) > 0n &&
-    BigInt(minSharesRaw!) <= BigInt(previewSharesRaw!),
+  const summary = useMemo<JsonObject>(
+    () => isRecord(pendingAction.arguments?.summary) ? pendingAction.arguments.summary : {},
+    [pendingAction.arguments?.summary],
   );
 
-  const isReviewValid = Boolean(
+  const preflight = useMemo(() => {
+    if (!address) return { error: 'Connect Core Wallet before deposit review.' };
+    try {
+      const request = buildReviewedDepositSendRequest(
+        pendingAction.arguments,
+        pendingAction.arguments,
+        address,
+        pendingAction.expires_at ?? '',
+        pendingAction.expires_at ?? '',
+      );
+      return { request };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Invalid deposit review.' };
+    }
+    // `now` deliberately recomputes freshness every second.
+  }, [address, pendingAction.arguments, pendingAction.expires_at, now]);
+
+  const reviewReady = Boolean(
     pendingAction.tool_name === 'prepare_vault_deposit' &&
     pendingAction.pending_action_id?.trim() &&
     HASH_RE.test(pendingAction.normalized_intent_hash ?? '') &&
     sessionId.trim() && sessionId.length <= 128 &&
-    chainId === FUJI_CHAIN_ID &&
+    isConnected && chainId === FUJI_CHAIN_ID &&
     pendingAction.chain_id === FUJI_CHAIN_ID &&
-    sameWallet && ownerMatches &&
-    vault && ADDRESS_RE.test(vault) &&
-    amountRelationshipValid &&
-    Number.isFinite(deadlineMs) && now < deadlineMs &&
-    Number.isFinite(expiresAtMs) && now < expiresAtMs,
+    address && ADDRESS_RE.test(address) &&
+    pendingAction.wallet_address?.toLowerCase() === address.toLowerCase() &&
+    !preflight.error,
   );
 
-  async function handleDecision(decision: PendingDecision) {
-    if (
-      !isReviewValid || busy || signMessage.isPending || decisionStatus ||
-      !pendingAction.pending_action_id || !pendingAction.normalized_intent_hash ||
-      !address
-    ) return;
+  const actionId = pendingAction.pending_action_id ?? '';
+  const reviewHash = pendingAction.normalized_intent_hash ?? '';
+  const approvedScopeMatches = Boolean(
+    approvedScope &&
+    approvedScope.actionId === actionId &&
+    approvedScope.reviewHash === reviewHash &&
+    approvedScope.sessionId === sessionId &&
+    address && approvedScope.wallet.toLowerCase() === address.toLowerCase() &&
+    chainId === FUJI_CHAIN_ID &&
+    JSON.stringify(summary) === approvedScope.summarySnapshot,
+  );
+  const isProcessing = busy || sendTransaction.isPending || hashBusy || receiptBusy ||
+    signMessage.isPending || isSigning;
 
+  async function handleDecision(decision: PendingDecision) {
+    if (!reviewReady || isProcessing || decisionStatus || !address) return;
     setBusy(true);
     setDecisionError(null);
     try {
-      // Core signs ONLY the challenge message supplied by the Backend.
-      // This stage does NOT broadcast an on-chain transaction.
       const result = await executeSignedDecision(
-        pendingAction.pending_action_id,
+        actionId,
         sessionId,
-        pendingAction.normalized_intent_hash,
+        reviewHash,
         decision,
         (message) => signMessage.mutateAsync({ message, account: address }),
       );
-      if (result.pending_action_id !== pendingAction.pending_action_id) {
-        throw new Error('Backend returned a different pending action ID.');
+      if (result.pending_action_id !== actionId ||
+          result.status !== (decision === 'confirm' ? 'confirmed' : 'rejected')) {
+        throw new Error('Backend returned a different action or decision.');
       }
-      if (result.status !== (decision === 'confirm' ? 'confirmed' : 'rejected')) {
-        throw new Error('Backend decision does not match the requested decision.');
-      }
-      if (result.status === 'confirmed' &&
-          (!Number.isFinite(Date.parse(result.expires_at)) ||
-            Date.now() >= Date.parse(result.expires_at))) {
-        throw new Error('Confirmed action is expired. Prepare a new deposit.');
-      }
+      // A confirmed action must not be signed twice, even if client-side
+      // validation below fails. Reprepare rather than retrying a decision.
       setDecisionStatus(result.status);
+      if (result.status === 'confirmed') {
+        const request = buildReviewedDepositSendRequest(
+          result.arguments,
+          pendingAction.arguments,
+          address,
+          pendingAction.expires_at ?? '',
+          result.expires_at,
+        );
+        setSendRequest(request);
+        setApprovedScope({
+          actionId,
+          reviewHash,
+          sessionId,
+          wallet: address,
+          expiresAtMs: Date.parse(result.expires_at),
+          summarySnapshot: JSON.stringify(summary),
+        });
+      }
     } catch (error) {
-      setDecisionError(error instanceof Error ? error.message : 'Unable to sign deposit decision.');
+      setDecisionError(error instanceof Error ? error.message : 'Unable to confirm Deposit.');
     } finally {
       setBusy(false);
     }
   }
 
-  if (!isOpen) return null;
+  async function handleSend() {
+    if (!address || !sendRequest || !approvedScope || !approvedScopeMatches ||
+        !reviewReady || decisionStatus !== 'confirmed' || txHash || isProcessing) return;
+    setSendError(null);
+    if (Date.now() >= approvedScope.expiresAtMs) {
+      setSendError('Confirmed Deposit expired. Prepare a new pending action.');
+      return;
+    }
+    // The preview may have expired while Core was displaying a prior prompt.
+    try {
+      buildReviewedDepositSendRequest(
+        pendingAction.arguments, pendingAction.arguments,
+        address, pendingAction.expires_at ?? '',
+        new Date(approvedScope.expiresAtMs).toISOString(),
+      );
+      if (hasStoredPendingSwap() || hasStoredPendingDeposit()) {
+        throw new Error('An earlier Swap or Deposit transaction still needs receipt recovery.');
+      }
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Deposit validation failed.');
+      return;
+    }
+    try {
+      const hash = await sendTransaction.mutateAsync({
+        ...sendRequest,
+        account: address,
+        chainId: FUJI_CHAIN_ID,
+      });
+      setTxHash(hash); // A returned hash means broadcast, not successful mining.
+      try {
+        savePendingDeposit({
+          actionId: approvedScope.actionId,
+          sessionId: approvedScope.sessionId,
+          reviewHash: approvedScope.reviewHash,
+          walletAddress: approvedScope.wallet,
+          chainId: FUJI_CHAIN_ID,
+          transactionHash: hash,
+          savedAt: Date.now(),
+        });
+      } catch {
+        setSendError('TX broadcast nhưng không lưu được recovery. Sao chép hash trước khi đóng trang!');
+      }
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Core Wallet could not broadcast Deposit.');
+    }
+  }
 
+  async function handleSubmitHash() {
+    if (!txHash || !approvedScope || !approvedScopeMatches || hashRecorded || isProcessing) return;
+    setHashBusy(true);
+    setHashError(null);
+    try {
+      const result = await submitHashWithWallet(approvedScope.actionId, {
+        session_id: approvedScope.sessionId,
+        review_hash: approvedScope.reviewHash,
+        wallet_address: approvedScope.wallet,
+        transaction_hash: txHash,
+      });
+      if (result.pending_action_id !== approvedScope.actionId ||
+          result.transaction_hash.toLowerCase() !== txHash.toLowerCase()) {
+        throw new Error('Backend returned a different Deposit transaction hash.');
+      }
+      setHashRecorded(true);
+      setHashStatus(result.status);
+      updatePendingDepositReceipt(txHash, { hashRecorded: true });
+    } catch (error) {
+      setHashError(error instanceof Error ? error.message : 'Submit Hash failed.');
+    } finally {
+      setHashBusy(false);
+    }
+  }
+
+  async function handleRefresh() {
+    if (!txHash || !approvedScope || !approvedScopeMatches ||
+        !hashRecorded || isProcessing || receiptStatus === 'mined') return;
+    setReceiptBusy(true);
+    setReceiptError(null);
+    try {
+      const result = await refreshReceiptWithWallet(approvedScope.actionId, {
+        session_id: approvedScope.sessionId,
+        review_hash: approvedScope.reviewHash,
+        wallet_address: approvedScope.wallet,
+      });
+      if (result.pending_action_id !== approvedScope.actionId ||
+          result.transaction_hash.toLowerCase() !== txHash.toLowerCase()) {
+        throw new Error('Backend returned a different Deposit receipt.');
+      }
+      setReceiptStatus(result.status);
+      updatePendingDepositReceipt(txHash, { hashRecorded: true, receiptStatus: result.status });
+    } catch (error) {
+      setReceiptError(error instanceof Error ? error.message : 'Refresh Receipt failed.');
+    } finally {
+      setReceiptBusy(false);
+    }
+  }
+
+  if (!isOpen) return null;
   const rows: [string, string][] = [
-    ['Vault', vault ?? 'Thiếu'],
-    ['Assets', assetsRaw ? `${formattedAmount(summary, 'assets') ?? ''} (raw: ${assetsRaw})` : 'Thiếu raw string'],
-    ['Asset token', assetToken ?? 'Chưa cung cấp'],
-    ['Preview shares', previewSharesRaw ? `${formattedAmount(summary, 'preview_shares') ?? ''} (raw: ${previewSharesRaw})` : 'Thiếu raw string'],
-    ['Minimum shares', minSharesRaw ? `${formattedAmount(summary, 'min_shares') ?? ''} (raw: ${minSharesRaw})` : 'Thiếu raw string'],
-    ['Deadline', displayTime(deadlineMs)],
-    ['Pending action expires', displayTime(expiresAtMs)],
+    ['Vault (DemoVault)', readString(summary, 'vault_address') ?? 'Thiếu'],
+    ['Assets', amount(summary, 'assets')],
+    ['Asset token', isRecord(summary.assets) && isRecord(summary.assets.asset) ? String(summary.assets.asset.symbol ?? summary.assets.asset.address ?? 'Thiếu') : 'Thiếu'],
+    ['Preview shares', amount(summary, 'preview_shares')],
+    ['Minimum shares', amount(summary, 'min_shares')],
+    ['Execution Manager', readString(summary, 'manager_address') ?? 'Thiếu'],
+    ['Deposit deadline', displayTime(typeof summary.deadline === 'number' ? summary.deadline * 1000 : NaN)],
+    ['Preview expires', displayTime(Date.parse(String(summary.preview_expires_at ?? '')))],
+    ['Action expires', displayTime(Date.parse(pendingAction.expires_at ?? ''))],
+    ['Network', pendingAction.chain_id === FUJI_CHAIN_ID ? 'Avalanche Fuji (43113)' : 'Sai mạng'],
     ['Wallet', pendingAction.wallet_address ?? 'Thiếu'],
-    ['Network', pendingAction.chain_id === FUJI_CHAIN_ID ? 'Avalanche Fuji (43113)' : 'Sai mạng / thiếu chain'],
-    ['Action ID', pendingAction.pending_action_id ?? 'Thiếu'],
+    ['Action ID', actionId || 'Thiếu'],
   ];
 
   return (
@@ -225,53 +346,68 @@ export default function DepositReviewModal({
       <section className="deposit-review-modal" role="dialog" aria-modal="true" aria-labelledby="deposit-review-title">
         <header className="deposit-review-header">
           <div>
-            <p className="deposit-review-eyebrow">DemoVault · Avalanche Fuji (verify contract address)</p>
+            <p className="deposit-review-eyebrow">DemoVault · Avalanche Fuji</p>
             <h2 id="deposit-review-title">Deposit Review</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Đóng Deposit Review">×</button>
+          <button type="button" disabled={isProcessing} onClick={onClose} aria-label="Đóng Deposit Review">×</button>
         </header>
 
         <p role="status" className="deposit-review-warning">
-          Dữ liệu được lấy từ pending action của Backend. Ký Confirm chỉ ký thông điệp challenge;
-          chưa gửi transaction lên blockchain. Hãy đối chiếu địa chỉ vault với Dev 1/Dev 2.
+          Core ký challenge trước, sau đó mới có thể gửi transaction. Chỉ dùng Fuji testnet.
+          Preview/deadline hết hạn phải tạo pending action mới, không gửi lại giao dịch cũ.
         </p>
-
         <dl className="deposit-review-fields">
-          {rows.map(([label, value]) => (
-            <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
-          ))}
+          {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
         </dl>
 
-        {!isReviewValid && (
-          <p className="deposit-review-error" role="alert">
-            Review chưa đạt kiểm tra: ví, chain, vault, số lượng raw (string), preview/min shares,
-            deadline, expiry hoặc review hash. Không được xác nhận giao dịch cũ hoặc thiếu dữ liệu.
+        {!reviewReady && !txHash && (
+          <p role="alert" className="deposit-review-error">
+            Review chưa hợp lệ: {preflight.error ?? 'Ví, chain, session hoặc pending action không khớp.'}
           </p>
         )}
-        {decisionError && <p className="deposit-review-error" role="alert">{decisionError}</p>}
-        {decisionStatus === 'confirmed' && (
-          <p role="status" className="deposit-review-warning">
-            Backend đã xác nhận quyết định. <strong>Deposit chưa được ký và phát lên Fuji.</strong>
-            Bước Send Transaction/Submit Hash/Receipt chỉ được mở sau khi đối chiếu
-            ABI và calldata của Deposit với bản review.
-          </p>
+        {decisionError && <p role="alert" className="deposit-review-error">{decisionError}</p>}
+        {sendError && <p role="alert" className="deposit-review-error">{sendError}</p>}
+        {hashError && <p role="alert" className="deposit-review-error">{hashError}</p>}
+        {receiptError && <p role="alert" className="deposit-review-error">{receiptError}</p>}
+
+        {decisionStatus && <p role="status">Review decision: <strong>{decisionStatus}</strong></p>}
+        {txHash && (
+          <div role="status" className="deposit-review-warning">
+            <strong>Transaction đã gửi, chưa xác nhận mined:</strong>
+            <p style={{ overflowWrap: 'anywhere' }}><code>{txHash}</code></p>
+            <a href={`https://testnet.snowtrace.io/tx/${txHash}`}
+               target="_blank" rel="noreferrer">Kiểm tra trên Fuji Explorer</a>
+          </div>
         )}
-        {decisionStatus === 'rejected' && <p role="status">Đã từ chối pending action.</p>}
+        {hashStatus && <p role="status">Submit Hash: <strong>{hashStatus}</strong></p>}
+        {receiptStatus && <p role="status">Receipt: <strong>{receiptStatus}</strong></p>}
 
         <details>
           <summary>Chi tiết summary do Backend trả về</summary>
           <pre>{JSON.stringify(summary, null, 2)}</pre>
         </details>
 
-        <footer className="deposit-review-actions">
-          <button type="button" onClick={onClose}>Đóng review</button>
+        <footer className="deposit-review-actions" style={{ flexWrap: 'wrap' }}>
+          <button type="button" disabled={isProcessing} onClick={onClose}>Đóng review</button>
           <button type="button" onClick={() => void handleDecision('reject')}
-            disabled={!isReviewValid || busy || signMessage.isPending || decisionStatus !== null}>
-            Từ chối
-          </button>
+            disabled={!reviewReady || isProcessing || decisionStatus !== null}>Từ chối</button>
           <button type="button" onClick={() => void handleDecision('confirm')}
-            disabled={!isReviewValid || busy || signMessage.isPending || decisionStatus !== null}>
-            {busy || signMessage.isPending ? 'Đang ký challenge...' : 'Ký Confirm Review'}
+            disabled={!reviewReady || isProcessing || decisionStatus !== null}>
+            {busy || signMessage.isPending ? 'Core ký challenge...' : 'Confirm Review'}
+          </button>
+          <button type="button" onClick={() => void handleSend()}
+            disabled={!reviewReady || !approvedScopeMatches || !sendRequest || decisionStatus !== 'confirmed' ||
+              isProcessing || Boolean(txHash)}>
+            {sendTransaction.isPending ? 'Core gửi Deposit...' : 'Send Deposit Transaction'}
+          </button>
+          <button type="button" onClick={() => void handleSubmitHash()}
+            disabled={!txHash || !approvedScopeMatches || hashRecorded || isProcessing}>
+            {hashBusy ? 'Đang ký Submit Hash...' : 'Submit Hash'}
+          </button>
+          <button type="button" onClick={() => void handleRefresh()}
+            disabled={!txHash || !approvedScopeMatches || !hashRecorded ||
+              isProcessing || receiptStatus === 'mined' || receiptStatus === 'failed'}>
+            {receiptBusy ? 'Đang kiểm tra receipt...' : 'Refresh Receipt'}
           </button>
         </footer>
       </section>
