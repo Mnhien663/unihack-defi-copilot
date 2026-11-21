@@ -1,7 +1,21 @@
 
-import "./Sidebar.css";
+import './Sidebar.css';
 
-export function Sidebar() {
+export type SidebarPage =
+  | 'chat'
+  | 'portfolio'
+  | 'risk'
+  | 'history';
+
+type SidebarProps = {
+  activePage: SidebarPage;
+  onNavigate: (page: SidebarPage) => void;
+};
+
+export function Sidebar({
+  activePage,
+  onNavigate,
+}: SidebarProps) {
   return (
     <aside className="dc-sidebar">
       <div className="dc-sidebar-top">
@@ -23,26 +37,65 @@ export function Sidebar() {
           + New Conversation
         </button>
 
-        <nav className="dc-nav" aria-label="Main navigation">
-          <div className="dc-nav-item dc-nav-active">
+        <nav
+          className="dc-nav"
+          aria-label="Main navigation"
+        >
+          <button
+            type="button"
+            className={`dc-nav-item ${
+              activePage === 'chat' ? 'dc-nav-active' : ''
+            }`}
+            aria-current={
+              activePage === 'chat' ? 'page' : undefined
+            }
+            onClick={() => onNavigate('chat')}
+          >
             <span>◉</span>
             AI Chat
-          </div>
+          </button>
 
-          <div className="dc-nav-item dc-nav-disabled">
+          <button
+            type="button"
+            className={`dc-nav-item ${
+              activePage === 'portfolio' ? 'dc-nav-active' : ''
+            }`}
+            aria-current={
+              activePage === 'portfolio' ? 'page' : undefined
+            }
+            onClick={() => onNavigate('portfolio')}
+          >
             <span>◫</span>
             Portfolio Breakdown
-          </div>
+          </button>
 
-          <div className="dc-nav-item dc-nav-disabled">
+          <button
+            type="button"
+            className={`dc-nav-item ${
+              activePage === 'risk' ? 'dc-nav-active' : ''
+            }`}
+            aria-current={
+              activePage === 'risk' ? 'page' : undefined
+            }
+            onClick={() => onNavigate('risk')}
+          >
             <span>◇</span>
             Risk &amp; Health Analysis
-          </div>
+          </button>
 
-          <div className="dc-nav-item dc-nav-disabled">
+          <button
+            type="button"
+            className={`dc-nav-item ${
+              activePage === 'history' ? 'dc-nav-active' : ''
+            }`}
+            aria-current={
+              activePage === 'history' ? 'page' : undefined
+            }
+            onClick={() => onNavigate('history')}
+          >
             <span>◷</span>
             Transaction History
-          </div>
+          </button>
         </nav>
       </div>
 

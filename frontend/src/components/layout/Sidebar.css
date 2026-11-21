@@ -151,3 +151,26 @@
   font-size: 12px;
   padding: 0 8px;
 }
+
+/* Clickable sidebar navigation */
+.dc-nav > button.dc-nav-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Preserve existing active navigation style */
+.dc-nav > button.dc-nav-active {
+  background: #111b30;
+  border-left: 3px solid var(--color-accent);
+  color: #ffffff;
+}
+
+.dc-nav > button.dc-nav-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
