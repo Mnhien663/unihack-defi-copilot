@@ -178,3 +178,8 @@ at Review without submitting another transaction.
 Integrated frontend `37ef72d` includes the Asset Token display fix
 and Swap receipt-status display corrections. The E2E evidence above
 applies to the versions explicitly listed.
+## Demo runbook
+
+See [Fuji demo runbook](docs/runbook.md) for setup and demo instructions.
+Commands were checked against Compose and Vite.
+Docker verification from a clean clone is still pending.
