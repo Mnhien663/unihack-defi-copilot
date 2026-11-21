@@ -1,4 +1,5 @@
 import { decodeFunctionData, parseAbi } from 'viem';
+import { canonicalDepositJson } from '../utils/canonicalDepositJson';
 
 // Contract and asset addresses verified against backend/internal/avalanche/
 // {tx.go,vault.go,deposit_tx.go} in the provided 2026-11-21 source snapshot.
@@ -81,8 +82,8 @@ export function buildReviewedDepositSendRequest(
   const reviewedSummary = record(original.summary, 'reviewed deposit summary');
   const confirmedSummary = record(approved.summary, 'confirmed deposit summary');
 
-  // The confirmed review must be the same JSON content that the user saw.
-  if (JSON.stringify(reviewedSummary) !== JSON.stringify(confirmedSummary)) {
+  // Compare complete JSON content independent of object key order.
+  if (canonicalDepositJson(reviewedSummary) !== canonicalDepositJson(confirmedSummary)) {
     throw new Error('Backend changed the deposit summary after review.');
   }
   const reviewedTx = record(original.transaction, 'reviewed transaction');
